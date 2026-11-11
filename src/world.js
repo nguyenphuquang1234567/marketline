@@ -30,122 +30,271 @@ function seeded(seed) {
   };
 }
 
-function materialTexture(kind, seed) {
-  const size = 192;
+function synthesizePBRMaterial(kind, seed, normalScale = 1) {
+  const size = 256;
+  const mask = size - 1;
   const random = seeded(seed);
-  const noise = new Float32Array(256);
+  const noise = new Float32Array(512);
   for (let i = 0; i < noise.length; i++) noise[i] = random();
   const sample = (x, y, cells) => {
-    x *= cells / size;
-    y *= cells / size;
-    const ix = Math.floor(x);
-    const iy = Math.floor(y);
-    const fx = x - ix;
-    const fy = y - iy;
+    const sx = ((x % size) + size) % size * (cells / size);
+    const sy = ((y % size) + size) % size * (cells / size);
+    const ix = Math.floor(sx);
+    const iy = Math.floor(sy);
+    const fx = sx - ix;
+    const fy = sy - iy;
     const a = fx * fx * (3 - 2 * fx);
     const b = fy * fy * (3 - 2 * fy);
-    const n = (i, j) => noise[((i % cells) * 71 + (j % cells) * 37) & 255];
+    const n = (i, j) => noise[(((i % cells) + cells) % cells * 73 + ((j % cells) + cells) % cells * 41) & 511];
     return (n(ix, iy) * (1 - a) + n(ix + 1, iy) * a) * (1 - b) +
       (n(ix, iy + 1) * (1 - a) + n(ix + 1, iy + 1) * a) * b;
   };
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  const raster = ctx.createImageData(size, size);
+  const fbm = (x, y) => sample(x, y, 4) * 0.52 + sample(x, y, 10) * 0.31 + sample(x, y, 24) * 0.17;
+
+  const heightField = new Float32Array(size * size);
+  const albedoCanvas = document.createElement('canvas');
+  albedoCanvas.width = albedoCanvas.height = size;
+  const albedoCtx = albedoCanvas.getContext('2d');
+  const albedoImg = albedoCtx.createImageData(size, size);
+
+  const roughCanvas = document.createElement('canvas');
+  roughCanvas.width = roughCanvas.height = size;
+  const roughCtx = roughCanvas.getContext('2d');
+  const roughImg = roughCtx.createImageData(size, size);
+
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const broad = sample(x, y, 4);
+      const medium = sample(x, y, 12);
+      const detail = sample(x, y, 28);
       const grain = random();
-      const detail = sample(x, y, 16);
-      let v = 207 + (broad - 0.5) * 34 + (detail - 0.5) * 22 + (grain - 0.5) * 26;
+      let r = 212 + (broad - 0.5) * 30 + (detail - 0.5) * 20 + (grain - 0.5) * 18;
+      let g = r - 3;
+      let b = r - 8;
+      let h = (broad - 0.5) * 0.35 + (medium - 0.5) * 0.25 + (detail - 0.5) * 0.2 + (grain - 0.5) * 0.08;
+      let rough = 215;
+
       if (kind === 'road') {
-        v += (grain - 0.5) * 69 - 28 + (detail - 0.5) * 34;
-        if (grain < 0.035) v -= 52;
-        if (grain > 0.968) v += 64;
+        // Cobblestone & compacted bazaar street aggregate with mortar seams
+        const gx = x / 32 + (medium - 0.5) * 0.22;
+        const gy = y / 24 + (broad - 0.5) * 0.22;
+        const row = Math.floor(gy);
+        const cx = gx + (row & 1) * 0.5;
+        const fx = Math.abs((cx - Math.floor(cx)) - 0.5) * 2;
+        const fy = Math.abs((gy - Math.floor(gy)) - 0.5) * 2;
+        const edge = Math.max(fx, fy);
+        const cobble = edge < 0.86 ? Math.sqrt(Math.max(0, 1 - (edge / 0.86) ** 2)) : 0;
+        const stoneHash = noise[((Math.floor(cx) * 59 + row * 97) & 511)];
+        const baseVal = 165 + (stoneHash - 0.5) * 34 + (detail - 0.5) * 32 + (grain - 0.5) * 38;
+        const mortar = edge >= 0.86 ? 1 : 0;
+        r = (baseVal + 6) * (1 - mortar * 0.28);
+        g = (baseVal + 1) * (1 - mortar * 0.29);
+        b = (baseVal - 7) * (1 - mortar * 0.31);
+        if (grain < 0.03) { r -= 42; g -= 42; b -= 42; }
+        if (grain > 0.968) { r += 48; g += 46; b += 40; }
+        h = cobble * 0.58 + (detail - 0.5) * 0.22 + (grain - 0.5) * 0.12 - mortar * 0.45;
+        rough = mortar ? 248 : Math.round(170 + (1 - cobble) * 55 + (1 - stoneHash) * 25);
       } else if (kind === 'plaster') {
-        v += broad > 0.62 ? (broad - 0.62) * 71 : 7;
-        if (detail < 0.25) v -= 8;
+        // Multi-layered limewash stucco with trowel ridges & weathered flaking
+        const trowel = Math.sin(x * 0.09 + broad * 4.8 + Math.cos(y * 0.07) * 2.2) * 0.5 + 0.5;
+        const flake = broad < 0.23 && medium < 0.38 ? 1 : 0;
+        const baseVal = 212 + (broad - 0.5) * 32 + (trowel - 0.5) * 14 + (detail - 0.5) * 18 + (grain - 0.5) * 16;
+        r = baseVal + 5 - flake * 24;
+        g = baseVal - flake * 28;
+        b = baseVal - 9 - flake * 34;
+        h = broad * 0.35 + trowel * 0.24 + detail * 0.18 - flake * 0.42;
+        rough = flake ? 245 : Math.round(205 + (1 - trowel) * 32);
       } else if (kind === 'wood') {
-        v += Math.sin(x * 0.37 + sample(x, y, 8) * 4) * 12;
-        if (x % 48 < 2) v -= 59;
+        // Planked timber with annual ring grain, knots & bevel seams
+        const plank = Math.floor(x / 64);
+        const seam = (x % 64) < 3 || (x % 64) > 62 ? 1 : 0;
+        const ring = Math.sin(x * 0.42 + fbm(x * 0.6, y * 0.18) * 9.5 + plank * 2.1);
+        const baseVal = 202 + ring * 16 + (broad - 0.5) * 22 + (grain - 0.5) * 16 - seam * 68;
+        r = baseVal + 10;
+        g = baseVal - 2;
+        b = baseVal - 16;
+        h = ring * 0.18 + detail * 0.14 - seam * 0.65;
+        rough = seam ? 250 : Math.round(168 - ring * 22 + detail * 28);
       } else if (kind === 'metal') {
-        v += (detail - 0.5) * 11;
-        if (grain < 0.022) v -= 28;
+        // Brushed rolled iron/steel with subtle oxidation patina & rivet seams
+        const brush = (sample(x * 4, y * 0.5, 32) - 0.5) * 18;
+        const rustSpot = broad > 0.72 && detail > 0.58 ? (broad - 0.72) * 3.2 : 0;
+        const baseVal = 204 + brush + (detail - 0.5) * 14 - (grain < 0.025 ? 30 : 0);
+        r = baseVal + rustSpot * 38;
+        g = baseVal - rustSpot * 12;
+        b = baseVal - 4 - rustSpot * 28;
+        h = brush * 0.015 + detail * 0.12 - rustSpot * 0.25;
+        rough = Math.round(132 + rustSpot * 95 + Math.abs(brush) * 1.8);
       } else if (kind === 'cloth') {
-        v += (x % 4 === 0 ? -16 : 0) + (y % 4 === 0 ? -9 : 0);
+        // Woven burlap & heavy bazaar canvas
+        const warp = Math.sin(x * 1.5708);
+        const weft = Math.sin(y * 1.5708);
+        const weave = (warp * warp + weft * weft) * 0.5;
+        const baseVal = 204 + (weave - 0.5) * 26 + (broad - 0.5) * 24 + (grain - 0.5) * 18;
+        r = baseVal + 4;
+        g = baseVal;
+        b = baseVal - 7;
+        h = weave * 0.38 + broad * 0.18;
+        rough = Math.round(224 + (1 - weave) * 24);
       } else if (kind === 'brick') {
-        const row = Math.floor(y / 24);
-        if (y % 24 < 2 || (x + (row % 2) * 24) % 48 < 2) v -= 66;
-        v += ((row * 53 + Math.floor((x + (row % 2) * 24) / 48) * 23) % 37) - 18;
+        // Hand-laid masonry courses with recessed mortar & per-brick terracotta/ochre tint
+        const row = Math.floor(y / 32);
+        const stagger = (row & 1) * 32;
+        const bx = (x + stagger) % 64;
+        const by = y % 32;
+        const mortar = by < 3 || by > 29 || bx < 3 || bx > 61 ? 1 : 0;
+        const brickId = ((row * 53 + Math.floor((x + stagger) / 64) * 29) & 511);
+        const brickTone = (noise[brickId] - 0.5) * 38;
+        const bevel = Math.min(Math.min(bx, 64 - bx), Math.min(by, 32 - by)) / 6;
+        const brickHeight = mortar ? 0 : Math.min(1, bevel) * (0.75 + noise[(brickId + 17) & 511] * 0.25);
+        const baseVal = mortar ? 142 + (detail - 0.5) * 24 : 206 + brickTone + (detail - 0.5) * 22 + (grain - 0.5) * 18;
+        r = baseVal + (mortar ? -4 : 11);
+        g = baseVal + (mortar ? -3 : -2);
+        b = baseVal + (mortar ? -2 : -13);
+        h = brickHeight * 0.78 + detail * 0.18 - mortar * 0.55;
+        rough = mortar ? 248 : Math.round(192 + (1 - brickHeight) * 38);
       }
-      const i = (y * size + x) * 4;
-      raster.data[i] = raster.data[i + 1] = raster.data[i + 2] = v;
-      raster.data[i + 3] = 255;
+
+      const idx = y * size + x;
+      heightField[idx] = h;
+      const p = idx * 4;
+      albedoImg.data[p] = Math.max(0, Math.min(255, Math.round(r)));
+      albedoImg.data[p + 1] = Math.max(0, Math.min(255, Math.round(g)));
+      albedoImg.data[p + 2] = Math.max(0, Math.min(255, Math.round(b)));
+      albedoImg.data[p + 3] = 255;
+
+      const rv = Math.max(0, Math.min(255, rough));
+      roughImg.data[p] = rv;
+      roughImg.data[p + 1] = rv;
+      roughImg.data[p + 2] = rv;
+      roughImg.data[p + 3] = 255;
     }
   }
-  ctx.putImageData(raster, 0, 0);
+  albedoCtx.putImageData(albedoImg, 0, 0);
+  roughCtx.putImageData(roughImg, 0, 0);
+
   if (kind === 'plaster' || kind === 'road') {
-    for (let i = 0; i < 20; i++) {
-      let x = 10 + random() * 170;
-      let y = 10 + random() * 170;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      for (let s = 0; s < 4; s++) {
-        x += (random() - 0.5) * (kind === 'road' ? 28 : 14);
-        y += (random() - 0.5) * 17;
-        ctx.lineTo(x, y);
+    for (let i = 0; i < 28; i++) {
+      let x = 12 + random() * (size - 24);
+      let y = 12 + random() * (size - 24);
+      albedoCtx.beginPath();
+      albedoCtx.moveTo(x, y);
+      for (let s = 0; s < 5; s++) {
+        x += (random() - 0.5) * (kind === 'road' ? 32 : 18);
+        y += (random() - 0.5) * 20;
+        albedoCtx.lineTo(x, y);
       }
-      ctx.strokeStyle = i % 3 ? '#2720173c' : '#fff2d96e';
-      ctx.lineWidth = 0.5 + random() * 0.75;
-      ctx.stroke();
+      albedoCtx.strokeStyle = i % 3 ? '#231c1444' : '#fff3dc66';
+      albedoCtx.lineWidth = 0.6 + random() * 0.85;
+      albedoCtx.stroke();
     }
   }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = 4;
-  return tex;
+
+  // Compute tangent-space normal map from heightField using Sobel operator
+  const normCanvas = document.createElement('canvas');
+  normCanvas.width = normCanvas.height = size;
+  const normCtx = normCanvas.getContext('2d');
+  const normImg = normCtx.createImageData(size, size);
+  const strength = 2.4 * normalScale;
+  for (let y = 0; y < size; y++) {
+    const ym = ((y - 1) & mask) * size;
+    const y0 = y * size;
+    const yp = ((y + 1) & mask) * size;
+    for (let x = 0; x < size; x++) {
+      const xm = (x - 1) & mask;
+      const xp = (x + 1) & mask;
+      const dx = (heightField[ym + xp] + 2 * heightField[y0 + xp] + heightField[yp + xp]) -
+                 (heightField[ym + xm] + 2 * heightField[y0 + xm] + heightField[yp + xm]);
+      const dy = (heightField[yp + xm] + 2 * heightField[yp + x] + heightField[yp + xp]) -
+                 (heightField[ym + xm] + 2 * heightField[ym + x] + heightField[ym + xp]);
+      let nx = -dx * strength;
+      let ny = dy * strength;
+      let nz = 1.0;
+      const invLen = 1 / Math.hypot(nx, ny, nz);
+      nx *= invLen;
+      ny *= invLen;
+      nz *= invLen;
+      const p = (y0 + x) * 4;
+      normImg.data[p] = Math.round((nx * 0.5 + 0.5) * 255);
+      normImg.data[p + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+      normImg.data[p + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+      normImg.data[p + 3] = 255;
+    }
+  }
+  normCtx.putImageData(normImg, 0, 0);
+
+  const map = new THREE.CanvasTexture(albedoCanvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.anisotropy = 8;
+
+  const normalMap = new THREE.CanvasTexture(normCanvas);
+  normalMap.colorSpace = THREE.NoColorSpace;
+  normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping;
+  normalMap.anisotropy = 4;
+
+  const roughnessMap = new THREE.CanvasTexture(roughCanvas);
+  roughnessMap.colorSpace = THREE.NoColorSpace;
+  roughnessMap.wrapS = roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.anisotropy = 4;
+
+  return { map, normalMap, roughnessMap };
 }
 
 function makeMaterials(seed) {
   const materials = {};
-  for (const [kind, roughness, metalness, bumpScale] of [
-    ['plaster', 0.91, 0, 0.021], ['road', 0.97, 0, 0.015], ['wood', 0.8, 0, 0.024],
-    ['metal', 0.63, 0.33, 0.009], ['cloth', 0.91, 0, 0.011], ['brick', 0.92, 0, 0.043],
+  for (const [kind, roughness, metalness, normalStrength] of [
+    ['plaster', 0.88, 0.02, 0.72],
+    ['road', 0.91, 0.03, 0.88],
+    ['wood', 0.76, 0.02, 0.78],
+    ['metal', 0.52, 0.58, 0.55],
+    ['cloth', 0.92, 0.01, 0.65],
+    ['brick', 0.89, 0.02, 1.05],
   ]) {
-    const map = materialTexture(kind, seed++);
+    const { map, normalMap, roughnessMap } = synthesizePBRMaterial(kind, seed++, normalStrength);
     materials[kind] = new THREE.MeshStandardMaterial({
-      color: 0xffffff, vertexColors: true, roughness, metalness, map, bumpMap: map, bumpScale,
+      color: 0xffffff,
+      vertexColors: true,
+      roughness,
+      metalness,
+      map,
+      normalMap,
+      normalScale: new THREE.Vector2(normalStrength * 0.55, normalStrength * 0.55),
+      roughnessMap,
     });
   }
-  materials.flat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86 });
+  materials.flat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04 });
   materials.glass = new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.31, metalness: 0.28, emissive: 0x17222a, emissiveIntensity: 0.22,
+    vertexColors: true, roughness: 0.18, metalness: 0.46, emissive: 0x1b2933, emissiveIntensity: 0.28,
+  });
+  materials.lantern = new THREE.MeshStandardMaterial({
+    vertexColors: true, color: 0xffe4a8, roughness: 0.25, metalness: 0.1, emissive: 0xffb85c, emissiveIntensity: 2.1,
   });
   materials.gravel = materials.plaster;
   materials.stain = new THREE.MeshStandardMaterial({
-    map: stainTexture(seed), vertexColors: true, roughness: 0.99, transparent: true,
-    opacity: 0.67, alphaTest: 0.016, depthWrite: false,
+    map: stainTexture(seed), vertexColors: true, roughness: 0.98, transparent: true,
+    opacity: 0.72, alphaTest: 0.016, depthWrite: false,
   });
   return materials;
 }
 
 function stainTexture(seed) {
   const canvas = document.createElement('canvas');
-  canvas.width = 96;
-  canvas.height = 128;
+  canvas.width = 128;
+  canvas.height = 192;
   const ctx = canvas.getContext('2d');
   const random = seeded(seed);
-  for (let i = 0; i < 50; i++) {
-    const x = 2 + random() * 91;
-    const length = 16 + random() * 111;
-    const width = 0.45 + random() * 4.5;
-    const edgeFade = Math.sin(x / 96 * Math.PI);
-    const color = 'rgba(255,255,255,' + (0.18 * edgeFade * random()) + ')';
+  for (let i = 0; i < 72; i++) {
+    const x = 3 + random() * 121;
+    const length = 22 + random() * 165;
+    const width = 0.55 + random() * 5.2;
+    const edgeFade = Math.sin(x / 128 * Math.PI);
+    const alpha = 0.21 * edgeFade * (0.4 + 0.6 * random());
+    const color = `rgba(255,250,240,${alpha.toFixed(3)})`;
     const gradient = ctx.createLinearGradient(0, 2, 0, length);
     gradient.addColorStop(0, '#ffffff00');
-    gradient.addColorStop(0.06, color);
-    gradient.addColorStop(0.24, color);
+    gradient.addColorStop(0.05, color);
+    gradient.addColorStop(0.28, color);
     gradient.addColorStop(1, '#ffffff00');
     ctx.fillStyle = gradient;
     ctx.fillRect(x, 2, width, length);
@@ -166,6 +315,7 @@ class StaticBatches {
     this.scale = vector(1, 1, 1);
     this.position = vector(0, 0, 0);
     this.point = vector(0, 0, 0);
+    this.normVec = vector(0, 0, 0);
     this.tint = new THREE.Color();
   }
 
@@ -187,17 +337,31 @@ class StaticBatches {
     const uv = geometry.getAttribute('uv');
     const offset = batch.position.length / 3;
     const fixedUV = material.startsWith('sign') || material === 'stain';
+    const isGround = material === 'road' || material === 'gravel' || material === 'lantern';
     const uOffset = fixedUV ? 0 : (x * 0.19 + z * 0.13) % 1;
     const vOffset = fixedUV ? 0 : y * 0.2 % 1;
     for (let i = 0; i < p.count; i++) {
+      const localY = p.getY(i);
       this.point.fromBufferAttribute(p, i).applyMatrix4(this.transform);
-      batch.position.push(this.point.x, this.point.y, this.point.z);
-      this.point.fromBufferAttribute(n, i).applyNormalMatrix(this.normal);
-      batch.normal.push(this.point.x, this.point.y, this.point.z);
+      const wx = this.point.x, wy = this.point.y, wz = this.point.z;
+      batch.position.push(wx, wy, wz);
+      this.normVec.fromBufferAttribute(n, i).applyNormalMatrix(this.normal).normalize();
+      const nx = this.normVec.x, ny = this.normVec.y, nz = this.normVec.z;
+      batch.normal.push(nx, ny, nz);
       const alongX = geometry === BOX ? (i >= 8 ? sx : sz) / 2.4 : uScale;
       const alongY = geometry === BOX ? (i >= 8 && i < 16 ? sz : sy) / 2.4 : vScale;
       batch.uv.push(uv.getX(i) * alongX + uOffset, uv.getY(i) * alongY + vOffset);
-      batch.color.push(this.tint.r, this.tint.g, this.tint.b);
+
+      // Procedural Vertex Ambient Occlusion & Directional Cavity Shading
+      let ao = 1.0;
+      if (!fixedUV && !isGround) {
+        const groundContact = 0.80 + 0.20 * Math.min(1, Math.max(0, wy / 0.52));
+        const hemiShade = ny > 0.45 ? 1.035 : ny < -0.45 ? 0.79 : 0.96 + 0.04 * (localY + 0.5);
+        const hash = Math.sin(Math.round(wx * 23) * 12.9898 + Math.round(wy * 23) * 78.233 + Math.round(wz * 23) * 37.719) * 43758.5453;
+        const micro = 0.97 + 0.06 * (hash - Math.floor(hash));
+        ao = groundContact * hemiShade * micro;
+      }
+      batch.color.push(this.tint.r * ao, this.tint.g * ao, this.tint.b * ao);
     }
     const index = geometry.getIndex();
     if (index) for (let i = 0; i < index.count; i++) batch.index.push(offset + index.getX(i));
@@ -214,8 +378,8 @@ class StaticBatches {
       meshGeometry.setIndex(batch.index);
       meshGeometry.computeBoundingSphere();
       const mesh = new THREE.Mesh(meshGeometry, this.materials[batch.material]);
-      mesh.castShadow = !['road', 'glass', 'gravel', 'stain'].includes(batch.material) && !batch.material.startsWith('sign');
-      mesh.receiveShadow = true;
+      mesh.castShadow = !['road', 'glass', 'gravel', 'stain', 'lantern'].includes(batch.material) && !batch.material.startsWith('sign');
+      mesh.receiveShadow = batch.material !== 'lantern';
       this.scene.add(mesh);
     }
     this.batches.clear();
@@ -229,35 +393,66 @@ function signTexture(title, subtitle, background, ink, motif = false) {
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, 512, 176);
+
+  // Subtle sun-bleached vignette & weathered border
+  const grad = ctx.createRadialGradient(256, 88, 30, 256, 88, 280);
+  grad.addColorStop(0, 'rgba(255,248,230,0.08)');
+  grad.addColorStop(1, 'rgba(18,14,10,0.28)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 512, 176);
+
   ctx.strokeStyle = ink;
-  ctx.lineWidth = 3;
-  ctx.strokeRect(9, 9, 494, 158);
+  ctx.lineWidth = 3.5;
+  ctx.strokeRect(8, 8, 496, 160);
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(14, 14, 484, 148);
+
+  // Corner mounting bolts
+  for (const [bx, by] of [[22, 22], [490, 22], [22, 154], [490, 154]]) {
+    ctx.fillStyle = 'rgba(28,22,18,0.65)';
+    ctx.beginPath();
+    ctx.arc(bx, by, 4.5, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
   ctx.fillStyle = ink;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = 'bold 53px sans-serif';
-  ctx.fillText(title, 256, 65, 452);
+  ctx.fillText(title, 256, 64, 448);
   ctx.font = 'bold 23px sans-serif';
-  ctx.fillText(subtitle, 256, 124, 418);
+  ctx.fillText(subtitle, 256, 125, 412);
   if (motif) {
     for (const x of [39, 473]) {
       ctx.beginPath();
-      ctx.moveTo(x, 103);
-      ctx.lineTo(x + 9, 114);
-      ctx.lineTo(x, 125);
-      ctx.lineTo(x - 9, 114);
+      ctx.moveTo(x, 101);
+      ctx.lineTo(x + 10, 114);
+      ctx.lineTo(x, 127);
+      ctx.lineTo(x - 10, 114);
+      ctx.closePath();
       ctx.fill();
     }
   }
   const random = seeded(7185 + title.length);
-  for (let i = 0; i < 3900; i++) {
-    ctx.fillStyle = i % 3 ? 'rgba(227,196,141,.14)' : 'rgba(31,26,19,.19)';
-    ctx.fillRect(random() * 512, random() * 176, random() * 3, random() * 2);
+  for (let i = 0; i < 4200; i++) {
+    ctx.fillStyle = i % 3 ? 'rgba(227,196,141,.14)' : 'rgba(31,26,19,.21)';
+    ctx.fillRect(random() * 512, random() * 176, random() * 3.2, random() * 2.2);
+  }
+  // Edge paint chipping & rust streaks from bolts
+  for (const [bx, by] of [[22, 22], [490, 22]]) {
+    const rust = ctx.createLinearGradient(0, by, 0, by + 55);
+    rust.addColorStop(0, 'rgba(68,32,14,0.38)');
+    rust.addColorStop(1, 'rgba(68,32,14,0)');
+    ctx.fillStyle = rust;
+    ctx.fillRect(bx - 2.5, by + 3, 5, 52);
   }
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;
-  map.anisotropy = 4;
-  return new THREE.MeshStandardMaterial({ map, vertexColors: true, roughness: 0.85 });
+  map.anisotropy = 8;
+  return new THREE.MeshStandardMaterial({ map, vertexColors: true, roughness: 0.78, metalness: 0.08 });
 }
 
 function clothTexture(primary, secondary) {
@@ -270,21 +465,29 @@ function clothTexture(primary, secondary) {
   ctx.fillStyle = secondary;
   for (let i = 0; i < 8; i++) {
     ctx.fillRect(i * 32 + 4, 0, 13, 128);
-    ctx.fillRect(i * 32 + 22, 0, 2, 128);
+    ctx.fillRect(i * 32 + 22, 0, 2.5, 128);
+  }
+  // Decorative bazaar woven border band near awning front edge
+  ctx.fillStyle = 'rgba(38,28,20,0.34)';
+  ctx.fillRect(0, 108, 256, 8);
+  ctx.fillStyle = secondary;
+  for (let x = 4; x < 256; x += 12) {
+    ctx.fillRect(x, 110, 6, 4);
   }
   const random = seeded(651);
-  for (let i = 0; i < 4300; i++) {
-    ctx.fillStyle = i % 2 ? '#2a211230' : '#fdf5d433';
-    ctx.fillRect(random() * 256, random() * 128, 0.7 + random() * 1.8, 0.9);
+  for (let i = 0; i < 4800; i++) {
+    ctx.fillStyle = i % 2 ? '#2a211232' : '#fdf5d436';
+    ctx.fillRect(random() * 256, random() * 128, 0.7 + random() * 2.0, 0.9);
   }
   for (const x of [1, 253]) {
-    ctx.fillStyle = '#3028247a';
+    ctx.fillStyle = '#30282482';
     ctx.fillRect(x, 0, 2, 128);
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
   return new THREE.MeshStandardMaterial({
-    map: tex, roughness: 0.94, side: THREE.DoubleSide, color: 0xffffff,
+    map: tex, roughness: 0.91, side: THREE.DoubleSide, color: 0xffffff,
   });
 }
 
@@ -1191,6 +1394,74 @@ export function buildWorld(scene, seed = 56103) {
   stairs.box('plaster', 0xb29d80, 0, 2.51, -4.47, 2.14, 1.1, 0.16);
   stairs.body(0, 2.51, -4.47, 2.14, 1.1, 0.16);
 
+  // AAA Bazaar Architectural Set-Dressing (isolated PRNG preserves all collider/bot determinism)
+  const detailRand = seeded(seed ^ 0x9e3779b9);
+  const dRange = (lo, hi) => lo + (hi - lo) * detailRand();
+  const dPick = list => list[Math.floor(detailRand() * list.length)];
+
+  // 1. Overhead wooden shade pergolas (mashrabiya trellises) casting striped sun shafts
+  for (const [zCenter, spanZ] of [[39.8, 3.8], [20.4, 3.4], [1.8, 3.6], [-21.5, 3.2]]) {
+    for (const zBeam of [zCenter - spanZ * 0.45, zCenter + spanZ * 0.45]) {
+      box('wood', 0x6b533b, 0, 6.28, zBeam, 15.9, 0.14, 0.16);
+      for (const s of [-1, 1]) {
+        box('metal', 0x48473f, s * 7.82, 6.08, zBeam, 0.22, 0.42, 0.22);
+      }
+    }
+    const slats = 18;
+    for (let s = 0; s < slats; s++) {
+      const sx = -7.2 + (s / (slats - 1)) * 14.4;
+      box('wood', s % 2 ? 0x7d6246 : 0x6e553c, sx, 6.39, zCenter, 0.14, 0.055, spanZ + 0.35);
+    }
+  }
+
+  // 2. Wrought-iron bazaar street lanterns & arch sconces with warm glowing cores
+  const addLantern = (lx, ly, lz, wallSide = 0) => {
+    if (wallSide !== 0) {
+      box('metal', 0x3e4039, lx - wallSide * 0.24, ly + 0.18, lz, 0.48, 0.045, 0.045);
+      box('metal', 0x3e4039, lx - wallSide * 0.38, ly + 0.02, lz, 0.24, 0.28, 0.035);
+    }
+    round(PIPE, 'metal', 0x3a3b35, lx, ly + 0.16, lz, 0.018, 0.16, 0.018);
+    round(POT, 'metal', 0x383a33, lx, ly + 0.05, lz, 0.14, 0.08, 0.14);
+    round(DRUM, 'lantern', 0xffe4a8, lx, ly - 0.07, lz, 0.105, 0.20, 0.105);
+    round(POT, 'metal', 0x383a33, lx, ly - 0.19, lz, 0.09, 0.06, 0.09);
+  };
+  for (const z of [44.2, 31.5, 16.8, 3.2, -11.4, -26.5, -45.8]) {
+    addLantern(-7.52, 3.55, z, 1);
+    addLantern(7.52, 3.55, z - 1.2, -1);
+  }
+  // Archway lanterns
+  for (const s of [-1, 1]) {
+    addLantern(s * 3.85, 5.15, -33.35, 0);
+    addLantern(s * 3.85, 5.15, -36.25, 0);
+  }
+
+  // 3. Stone flagstone runners & archway threshold bands along the bazaar spine
+  for (let z = -52; z <= 52; z += 2.6) {
+    if (z > -45 && z < -27) continue;
+    for (const s of [-1, 1]) {
+      const stoneTint = dPick([0x9e927c, 0x948873, 0xa89b84, 0x8d826e]);
+      box('brick', stoneTint, s * 4.85, -0.008, z + dRange(-0.08, 0.08), 0.92, 0.022, 2.35);
+    }
+  }
+  for (const zBand of [-26.8, -34.8]) {
+    box('brick', 0xb6a184, 0, -0.006, zBand, 8.2, 0.022, 1.35);
+    box('plaster', 0x9c8b72, 0, -0.005, zBand - 0.72, 8.3, 0.023, 0.14);
+    box('plaster', 0x9c8b72, 0, -0.005, zBand + 0.72, 8.3, 0.023, 0.14);
+  }
+
+  // 4. Terracotta amphorae, woven carpets & copper vessels beside stalls and walls
+  for (const [ax, az] of [
+    [-6.25, 42.8], [6.35, 39.9], [-6.18, 30.8], [6.28, 28.1],
+    [-6.22, 21.2], [6.15, 11.6], [-6.12, 6.9], [6.22, -5.8],
+    [-6.15, -17.1], [-4.85, -33.1], [4.85, -36.4],
+  ]) {
+    const vaseTint = dPick([0xa86844, 0x965a38, 0xb57a52, 0x8c5538]);
+    const hScale = dRange(0.34, 0.48);
+    round(POT, 'plaster', vaseTint, ax, hScale * 0.45, az, hScale * 0.46, hScale * 0.9, hScale * 0.46);
+    round(PIPE, 'plaster', shade(vaseTint, 0.86), ax, hScale * 0.98, az, hScale * 0.24, hScale * 0.22, hScale * 0.24);
+    round(DRUM, 'plaster', shade(vaseTint, 1.08), ax, hScale * 1.09, az, hScale * 0.29, 0.035, hScale * 0.29);
+  }
+
   batches.build();
   const dustPositions = [];
   const dustPhase = [];
@@ -1287,6 +1558,8 @@ export function buildWorld(scene, seed = 56103) {
     for (const material of uniqueMaterials) {
       if (material.map) textures.add(material.map);
       if (material.bumpMap) textures.add(material.bumpMap);
+      if (material.normalMap) textures.add(material.normalMap);
+      if (material.roughnessMap) textures.add(material.roughnessMap);
       material.dispose();
     }
     for (const texture of textures) texture.dispose();

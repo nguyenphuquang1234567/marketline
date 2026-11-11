@@ -117,16 +117,37 @@ export class Effects {
 
     const markGeo = new THREE.PlaneGeometry(1, 1);
     const markCanvas = document.createElement('canvas');
-    markCanvas.width = markCanvas.height = 64;
+    markCanvas.width = markCanvas.height = 128;
     const ctx = markCanvas.getContext('2d');
-    const gradient = ctx.createRadialGradient(32, 32, 1, 32, 32, 31);
-    gradient.addColorStop(0, '#211b15');
-    gradient.addColorStop(.21, '#2d241c');
-    gradient.addColorStop(.38, '#4f3d2dbe');
-    gradient.addColorStop(.76, '#69584834');
+    const gradient = ctx.createRadialGradient(64, 64, 2, 64, 64, 60);
+    gradient.addColorStop(0, '#0f0c09');
+    gradient.addColorStop(.16, '#1f1812');
+    gradient.addColorStop(.32, '#473728d8');
+    gradient.addColorStop(.52, '#7d685266');
+    gradient.addColorStop(.82, '#69584824');
     gradient.addColorStop(1, '#69584800');
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillRect(0, 0, 128, 128);
+    // Spalling plaster rim & radial fracture cracks (Saltline-style decal synthesis)
+    const dRand = randomFor(seed ^ 0x41c64e6d);
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2 + (dRand() - .5) * .28;
+      let rx = 64 + Math.cos(a) * 9;
+      let ry = 64 + Math.sin(a) * 9;
+      ctx.beginPath();
+      ctx.moveTo(rx, ry);
+      const segs = 3 + Math.floor(dRand() * 3);
+      for (let s = 0; s < segs; s++) {
+        const dist = 8 + dRand() * 9;
+        const jitter = a + (dRand() - .5) * .55;
+        rx += Math.cos(jitter) * dist;
+        ry += Math.sin(jitter) * dist;
+        ctx.lineTo(rx, ry);
+      }
+      ctx.strokeStyle = i % 3 === 0 ? 'rgba(225,205,175,0.34)' : 'rgba(26,20,14,0.62)';
+      ctx.lineWidth = .9 + dRand() * 1.1;
+      ctx.stroke();
+    }
     const map = new THREE.CanvasTexture(markCanvas);
     map.colorSpace = THREE.SRGBColorSpace;
     this.markMaterial = new THREE.MeshBasicMaterial({
