@@ -1,0 +1,317 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { Box3, Group, Scene, Vector3 } from 'three';
+import { BotRig } from '../src/bot-rig.js';
+import { BotSystem, NavWorld } from '../src/bots.js';
+import { CharacterController, StaticBVH } from '../src/physics.js';
+import { RigidWorld } from '../src/rigid-world.js';
+
+const vector = (x, y, z) => new Vector3(x, y, z);
+const box = (min, max, surface = 'concrete') => ({
+  min: vector(...min),
+  max: vector(...max),
+  surface,
+});
+const advance = (controller, wish, ticks, options = {}) => {
+  let peak = controller.position.y;
+  for (let index = 0; index < ticks; index += 1) {
+    controller.step(1 / 120, { wish, ...options });
+    peak = Math.max(peak, controller.position.y);
+  }
+  return peak;
+};
+
+test('BVH returns the nearest material, entry normal, and unclipped exit', () => {
+  const plank = box([-1, 0, -3], [1, 3, -2.5], 'wood');
+  const distant = box([-2, 0, -7], [2, 3, -5], 'metal');
+  const boxes = [plank, distant];
+  for (let index = 0; index < 24; index += 1) {
+    const x = 3 + index;
+    boxes.push(box([x, 0, -9], [x + 0.5, 2, -4]));
+  }
+  const physics = new StaticBVH(boxes);
+  const origin = vector(0, 1, 0);
+  const direction = vector(0, 0, -1);
+  assert.equal(physics.raycast(origin, direction, 2.49), null);
+  const hit = physics.raycast(origin, direction, 2.6);
+  assert.equal(hit.distance, 2.5);
+  assert.equal(hit.exitDistance, 3);
+  assert.equal(hit.surface, 'wood');
+  assert.deepEqual(hit.normal.toArray(), [0, 0, 1]);
+  assert.equal(physics.raycast(origin, direction, 20, plank).collider, distant);
+  assert.equal(physics.segmentCast(origin, vector(0, -1, 0)).surface, 'asphalt');
+});
+
+test('sphere sweeps detect thin obstacles from above and below', () => {
+  const platform = box([-1, 1, -3], [1, 1.04, -2]);
+  const physics = new StaticBVH([platform]);
+  const top = physics.sphereCast(vector(0, 2, -2.5), vector(0, -2, 0), 0.2);
+  const bottom = physics.sphereCast(vector(0, 0.2, -2.5), vector(0, 2, 0), 0.2);
+  assert.ok(Math.abs(top.fraction - 0.38) < 1e-6);
+  assert.ok(Math.abs(bottom.fraction - 0.3) < 1e-6);
+  assert.equal(top.normal.y, 1);
+  assert.equal(bottom.normal.y, -1);
+});
+
+test('the controller stops at walls, clears a step, and mantles a low ledge', () => {
+  const physics = new StaticBVH([
+    box([-1, 0, -3], [1, 3, -2.5]),
+    box([-1, 0, 2], [1, 0.25, 3], 'wood'),
+    box([2, 0, -3], [4, 0.78, -1], 'wood'),
+  ]);
+  const controller = new CharacterController(physics, vector(0, 0, 0));
+  advance(controller, vector(0, 0, -1), 120, { speed: 13 });
+  assert.ok(controller.position.z > -2.183 && controller.position.z < -2.155);
+  assert.equal(physics.overlapsCapsule(controller.position, controller.radius, controller.height), false);
+
+  controller.teleport(vector(0, 0, 0));
+  assert.ok(advance(controller, vector(0, 0, 1), 120) >= 0.25);
+  assert.ok(controller.position.z > 3);
+  controller.teleport(vector(3, 0, -0.61));
+  controller.step(1 / 120, { wish: vector(0, 0, -1), mantle: true });
+  assert.ok(controller.mantleTime > 0);
+  advance(controller, vector(0, 0, -1), 37);
+  assert.ok(controller.position.y > 0.78);
+});
+
+test('navigation routes around a thin wall between adjacent grid cells', () => {
+  const physics = new StaticBVH([box([-0.05, 0, -5], [0.05, 3, 1.6])]);
+  const nav = new NavWorld(physics, { minX: -5, maxX: 5, minZ: -5, maxZ: 5 });
+  const route = nav.route(vector(-3, 0, 0), vector(3, 0, 0));
+  const across = route.find((point) => point.x > 0);
+  assert.ok(across && across.z > 1.6);
+  assert.ok(route.at(-1).x > 2.5);
+});
+
+test('bots replay deterministically, respect smoke, and clean up a fallen operative', () => {
+  const scene = new Scene();
+  const physics = new StaticBVH([box([-1, 0, -3], [1, 3, -2.5])]);
+  const world = {
+    bounds: { minX: -20, maxX: 20, minZ: -20, maxZ: 20 },
+    spawns: [
+      [vector(-2, 0, 14), vector(0, 0, 14), vector(1, 0, 14), vector(2, 0, 14)],
+      [vector(-2, 0, -14), vector(0, 0, -14), vector(1, 0, -14), vector(2, 0, -14)],
+    ],
+  };
+  const player = { position: world.spawns[0][0].clone(), team: 0, alive: true, height: 1.77 };
+  let shots = 0;
+  let steps = 0;
+  let smoke = false;
+  const bots = new BotSystem({
+    scene, physics, world, seed: 42,
+    onFire: () => { shots += 1; },
+    onStep: () => { steps += 1; },
+    isObscured: () => smoke,
+  });
+  function runRound() {
+    shots = 0;
+    steps = 0;
+    bots.reset();
+    for (let tick = 1; tick <= 3600; tick += 1) bots.step(1 / 120, player, tick / 120);
+    return { shots, steps, positions: bots.bots.map((bot) => bot.position.toArray()) };
+  }
+  const first = runRound();
+  assert.ok(first.shots > 20);
+  assert.ok(first.steps > 20);
+  assert.deepEqual(runRound(), first);
+
+  smoke = true;
+  const operative = bots.bots[3];
+  bots.kill(operative, vector(1, 0, 0));
+  for (let tick = 3601; tick <= 4320; tick += 1) bots.step(1 / 120, player, tick / 120);
+  assert.equal(shots, first.shots);
+  assert.equal(operative.alive, false);
+  assert.equal(operative.group.visible, false);
+  assert.ok(operative.rig.joints.every((joint) => joint.toArray().every(Number.isFinite)));
+  bots.respawn(operative, world.spawns[1][0]);
+  assert.equal(operative.alive, true);
+  assert.equal(operative.group.visible, true);
+  bots.dispose();
+  assert.equal(scene.children.length, 0);
+});
+
+
+test('operative clothes stay closed while crouching and switching detail', () => {
+  const physics = new StaticBVH([]);
+  const group = new Group();
+  const rig = new BotRig(group, 3, 1);
+  const bot = {
+    position: vector(0, 0, 0), velocity: vector(0, 0, 0), height: 1.77, controller: { grounded: true },
+    yaw: 0, pitch: 0, kick: 0, clock: 0, state: 'engage', visibleTarget: true,
+  };
+  rig.pose(bot, physics, 1 / 60);
+  const standing = new Box3().setFromObject(group, true);
+  assert.ok(standing.max.y > 1.74 && standing.max.y < 1.81);
+
+  bot.height = 1.16;
+  for (let tick = 0; tick < 28; tick++) rig.pose(bot, physics, 1 / 60);
+  for (const distance of [100, 40 ** 2]) {
+    rig.setDetail(distance);
+    rig.pose(bot, physics, 1 / 60);
+    const geometry = rig.skin.uniform.mesh.geometry;
+    const position = geometry.getAttribute('position');
+    const normal = geometry.getAttribute('normal');
+    assert.ok(position.array.every(Number.isFinite) && normal.array.every(Number.isFinite));
+    const faces = geometry.index.array;
+    const unique = new Map();
+    const welded = [];
+    for (let i = 0; i < position.count; i++) {
+      const key = [position.getX(i), position.getY(i), position.getZ(i)]
+        .map(value => Math.round(value * 1e6)).join('/');
+      if (!unique.has(key)) unique.set(key, unique.size);
+      welded[i] = unique.get(key);
+    }
+    const edges = new Map();
+    for (let i = 0; i < faces.length; i += 3) {
+      const face = [welded[faces[i]], welded[faces[i + 1]], welded[faces[i + 2]]];
+      assert.equal(new Set(face).size, 3);
+      for (let edge = 0; edge < 3; edge++) {
+        const a = face[edge], b = face[(edge + 1) % 3];
+        const key = Math.min(a, b) + '/' + Math.max(a, b);
+        edges.set(key, (edges.get(key) ?? 0) + 1);
+      }
+    }
+    assert.ok([...edges.values()].every(uses => uses === 2));
+    const crouching = new Box3().setFromObject(group, true);
+    assert.ok(crouching.max.y < standing.max.y - .49);
+  }
+
+  rig.fall(vector(1, 0, .15), vector(.7, 0, 0));
+  for (let i = 0; i < 258; i++) rig.tumble(physics, 1 / 120);
+  assert.ok(rig.skin.rifle.position.distanceTo(rig.joints[14]) > .13);
+  assert.ok(new Box3().setFromObject(group, true).min.y > -.09);
+  rig.dispose();
+});
+
+test('a running bot brakes at a wall and pivots with planted feet', () => {
+  const physics = new StaticBVH([box([-4, 0, -2.7], [4, 3, -2.45])]);
+  const controller = new CharacterController(physics, vector(0, 0, 0));
+  const rig = new BotRig(new Group(), 3, 1);
+  const bot = {
+    position: controller.position, velocity: controller.velocity, height: controller.height, controller,
+    yaw: 0, pitch: 0, kick: 0, clock: 0, state: 'engage', visibleTarget: true,
+  };
+  rig.pose(bot, physics, 1 / 60);
+  const previous = rig.feet.map(foot => ({ point: foot.position.clone(), yaw: foot.yaw, swinging: foot.swinging }));
+  const wish = vector(0, 0, -1);
+  let stopSteps = 0;
+  let pivotSteps = 0;
+  let contactFrames = 0;
+  for (let tick = 1; tick <= 288; tick++) {
+    bot.clock = tick / 120;
+    if (tick >= 150) {
+      wish.set(0, 0, 0);
+      bot.yaw = Math.min(Math.PI / 2, (tick - 150) / 120 * 4);
+    }
+    controller.step(1 / 120, { wish, speed: 4.22 });
+    bot.height = controller.height;
+    if (tick % 2) continue;
+    const headBefore = rig.skin.head.position.clone();
+    const contact = rig.pose(bot, physics, 1 / 60);
+    if (contact) {
+      assert.equal(contact, 'asphalt');
+      if (tick < 150) stopSteps++;
+      else pivotSteps++;
+    }
+    for (let i = 0; i < 2; i++) {
+      const foot = rig.feet[i];
+      const sample = previous[i];
+      const stride = sample.point.distanceTo(foot.position);
+      assert.ok(stride < .3, 'a swing advances continuously through the wall stop');
+      if (!sample.swinging && !foot.swinging) {
+        contactFrames++;
+        assert.ok(stride < 1e-7, 'a planted foot keeps its world position');
+        assert.equal(foot.yaw, sample.yaw, 'a planted shoe holds its orientation');
+      }
+      const reach = rig.joints[i ? 6 : 3].distanceTo(rig.joints[i ? 8 : 5]);
+      assert.ok(reach < .92, 'the pelvis compensates before the leg overextends');
+      sample.point.copy(foot.position);
+      sample.yaw = foot.yaw;
+      sample.swinging = foot.swinging;
+    }
+    if (tick === 40) {
+      const headAfter = rig.skin.head.position.clone();
+      const expected = headBefore.lerp(headAfter, .5);
+      rig.presentation.apply(.5);
+      assert.ok(rig.skin.head.position.distanceTo(expected) < 1e-7);
+      rig.presentation.restore();
+      assert.ok(rig.skin.head.position.equals(headAfter));
+    }
+  }
+  assert.ok(stopSteps >= 2);
+  assert.ok(pivotSteps >= 2);
+  assert.ok(contactFrames > 70);
+  rig.dispose();
+});
+
+test('boots lift over a curb before swinging forward', () => {
+  const physics = new StaticBVH([box([-3, 0, -6.3], [3, .17, -3.3])]);
+  const controller = new CharacterController(physics, vector(0, .002, 0));
+  const rig = new BotRig(new Group(), 3, 1);
+  const bot = {
+    position: controller.position, velocity: controller.velocity, height: controller.height, controller,
+    yaw: 0, pitch: 0, kick: 0, clock: 0, reloading: 0, state: 'patrol', visibleTarget: null,
+  };
+  const wish = vector(0, 0, 0), probe = vector(0, 0, 0), sole = vector(0, 0, 0), down = vector(0, -1, 0);
+  rig.pose(bot, physics, 1 / 60);
+  let touches = 0;
+  for (let tick = 1; tick <= 330; tick++) {
+    bot.clock = tick / 120;
+    wish.z = bot.clock >= .32 && bot.clock < 2.64 ? -1 : 0;
+    controller.step(1 / 120, { wish, speed: 3.1 });
+    bot.height = controller.height;
+    if (tick % 2) continue;
+    if (rig.pose(bot, physics, 1 / 60) === 'concrete') touches++;
+    for (const { shoe } of rig.skin.limbs) {
+      for (const z of [-.16, .044]) {
+        sole.set(0, -.086, z).applyQuaternion(shoe.quaternion).add(shoe.position);
+        const floor = physics.raycast(probe.copy(sole).addScaledVector(down, -.45), down, .95);
+        assert.ok(!floor || sole.y - floor.point.y > -.035, 'the sole clears the curb lip');
+      }
+    }
+  }
+  assert.ok(touches >= 2, 'footfalls use the curb surface');
+  rig.dispose();
+});
+
+test('reactive crates stack, sleep, and wake when their support is shot', () => {
+  const physics = new StaticBVH([]);
+  const rigid = new RigidWorld(physics);
+  const crates = [0.245, 0.747, 1.25].map((height) => rigid.add({
+    position: vector(0, height, 0), halfExtents: vector(0.24, 0.245, 0.24),
+  }));
+  for (let tick = 0; tick < 360; tick += 1) rigid.step(1 / 120);
+  assert.equal(rigid.activeCount, 0);
+  assert.ok(crates[2].position.y > 1.21);
+  const hit = rigid.raycast(vector(0, 0.74, 2), vector(0, 0, -1), 1.9);
+  assert.equal(hit.body, crates[1]);
+  assert.ok(hit.exitDistance > 2.2);
+
+  rigid.impulse(crates[0], vector(-3.7, 0.25, 0), crates[0].position.clone().add(vector(0, 0, 0.03)));
+  rigid.step(1 / 120);
+  assert.equal(rigid.activeCount, 3);
+  for (let tick = 0; tick < 310; tick += 1) rigid.step(1 / 120);
+  assert.ok(crates[0].position.x < -0.5);
+  assert.ok(crates[2].position.y < 0.6);
+  assert.equal(rigid.activeCount, 0);
+  rigid.reset();
+  assert.equal(crates[0].position.x, 0);
+  assert.equal(crates[2].position.y, 1.25);
+});
+
+test('a fast reactive tin hits a thin static wall and stops', () => {
+  const physics = new StaticBVH([box([2.3, 0, -2], [2.34, 4, 2], 'metal')]);
+  const rigid = new RigidWorld(physics);
+  const tin = rigid.add({
+    shape: 'sphere', radius: 0.11, position: vector(1, 0.2, 0),
+    mass: 0.5, restitution: 0.1, surface: 'metal',
+  });
+  for (let tick = 0; tick < 180; tick += 1) rigid.step(1 / 120);
+  assert.equal(tin.sleeping, true);
+  rigid.impulse(tin, vector(19, 0.75, 0));
+  for (let tick = 0; tick < 360; tick += 1) {
+    rigid.step(1 / 120);
+    assert.ok(tin.position.x < 2.191);
+  }
+  assert.equal(tin.sleeping, true);
+});

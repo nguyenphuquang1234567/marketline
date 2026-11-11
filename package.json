@@ -1,0 +1,16 @@
+{
+  "name": "marketline",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "^20.19.0 || >=22.12.0" },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/simulation.test.js && npm run build && playwright test",
+    "benchmark": "npm run build && playwright test --grep benchmark"
+  },
+  "dependencies": { "three": "0.180.0" },
+  "devDependencies": { "@playwright/test": "1.65.0", "vite": "7.3.8" }
+}
