@@ -46,26 +46,33 @@ function grainTexture(random) {
 }
 
 function materials(texture) {
-  const make = (color, roughness, metalness, detail = texture) =>
-    new THREE.MeshStandardMaterial({ color, roughness, metalness, roughnessMap: detail });
+  const make = (color, roughness, metalness, bumpScale = 0.0022, detail = texture) =>
+    new THREE.MeshStandardMaterial({
+      color,
+      roughness,
+      metalness,
+      roughnessMap: detail,
+      bumpMap: detail,
+      bumpScale,
+    });
   return {
-    body: make(0x596261, 0.63, 0.31),
-    trim: make(0x353d3f, 0.74, 0.29),
-    edge: make(0x6e7775, 0.48, 0.54),
-    steel: make(0x8c9798, 0.4, 0.63),
-    dark: make(0x141c20, 0.76, 0.12),
-    polymer: make(0x353e3c, 0.92, 0.05),
-    pad: make(0x21282b, 0.94, 0),
-    brass: make(0xc19450, 0.36, 0.6),
-    copper: make(0x945a3f, 0.44, 0.5),
-    accent: make(0xb49a66, 0.72, 0.18),
-    railCover: make(0x78735b, 0.84, 0.16),
-    linen: make(0x7c8368, 0.99, 0),
-    linenLight: make(0x888a70, 0.98, 0),
-    linenDark: make(0x484c3d, 0.98, 0),
-    glove: make(0x54564a, 0.96, 0.02),
-    leather: make(0x343632, 0.86, 0),
-    stitch: make(0x92917a, 1, 0),
+    body: make(0x56605f, 0.58, 0.36, 0.0020),
+    trim: make(0x323a3c, 0.70, 0.34, 0.0022),
+    edge: make(0x727c7a, 0.44, 0.58, 0.0016),
+    steel: make(0x919c9d, 0.36, 0.68, 0.0014),
+    dark: make(0x141c20, 0.72, 0.16, 0.0018),
+    polymer: make(0x333c3a, 0.88, 0.06, 0.0032),
+    pad: make(0x1f2629, 0.92, 0.02, 0.0035),
+    brass: make(0xc49752, 0.34, 0.64, 0.0012),
+    copper: make(0x985d42, 0.42, 0.54, 0.0012),
+    accent: make(0xb89d68, 0.68, 0.22, 0.0020),
+    railCover: make(0x78735b, 0.82, 0.16, 0.0030),
+    linen: make(0x6e765c, 0.94, 0, 0.0055),
+    linenLight: make(0x82866b, 0.93, 0, 0.0048),
+    linenDark: make(0x464b3b, 0.95, 0, 0.0050),
+    glove: make(0x4f5246, 0.92, 0.02, 0.0042),
+    leather: make(0x2c2f2c, 0.80, 0.04, 0.0038),
+    stitch: make(0x96957e, 0.96, 0, 0.0020),
   };
 }
 
@@ -90,7 +97,7 @@ function bevel(width, height, depth, radius) {
   return geometry;
 }
 
-function ellipseTube(points, dimensions, sides = 12) {
+function ellipseTube(points, dimensions, sides = 12, wave = 0) {
   const path = new THREE.CatmullRomCurve3(points.map(point => new V3(...point)));
   const vertices = [];
   const normals = [];
@@ -114,7 +121,13 @@ function ellipseTube(points, dimensions, sides = 12) {
       const angle = (side / sides) * PI * 2;
       const x = Math.cos(angle);
       const y = Math.sin(angle);
-      const [width, height] = dimensions[ring];
+      const [baseWidth, baseHeight] = dimensions[ring];
+      const fold = wave * (
+        Math.sin(amount * PI * 6.5 + angle * 2) * 0.65
+        + Math.cos(amount * PI * 11 - angle * 3) * 0.35
+      ) * Math.sin(amount * PI);
+      const width = baseWidth + fold;
+      const height = baseHeight + fold * 0.85;
       offset.copy(center).addScaledVector(across, x * width).addScaledVector(above, y * height);
       radial.copy(across).multiplyScalar(x / width).addScaledVector(above, y / height).normalize();
       vertices.push(offset.x, offset.y, offset.z);
@@ -132,6 +145,7 @@ function ellipseTube(points, dimensions, sides = 12) {
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geometry.setIndex(indices);
+  if (wave > 0) geometry.computeVertexNormals();
   return geometry;
 }
 
@@ -225,6 +239,9 @@ function makeCarbine(group, m) {
   a.box(m.dark, 0.0395, 0.004, 0.001, 0.003, 0.025, 0.096, 0.001);
   a.box(m.edge, 0.048, -0.014, 0.005, 0.022, 0.005, 0.104, 0.0015, 0, 0, -0.26);
   a.box(m.trim, 0.044, 0.001, 0.06, 0.018, 0.019, 0.022, 0.003);
+  a.box(m.body, 0.043, 0.011, 0.108, 0.014, 0.016, 0.034, 0.003, 0, 0.18, 0);
+  a.tube(m.steel, 0.047, 0.011, 0.128, 0.0055, 0.014, 12);
+  a.box(m.edge, -0.042, 0.003, -0.004, 0.006, 0.022, 0.014, 0.0015);
   a.box(m.dark, -0.04, -0.001, 0.051, 0.002, 0.021, 0.079, 0.001);
   for (let i = 0; i < 5; i++) {
     a.box(m.edge, -0.0414, -0.004, 0.031 + i * 0.009, 0.0008, 0.0015, 0.005, 0.0003);
@@ -274,6 +291,15 @@ function makeCarbine(group, m) {
       a.box(m.dark, side * 0.026, -0.032, z + 0.004, 0.005, 0.005, 0.019, 0.001, 0, 0, side * -0.45);
     }
   }
+  // Right-side tactical laser/illuminator box (PEQ-15 style) & top pressure switch pad
+  a.box(m.railCover, 0.052, 0.008, -0.292, 0.024, 0.036, 0.082, 0.004);
+  a.box(m.dark, 0.064, 0.008, -0.292, 0.004, 0.022, 0.054, 0.0015);
+  a.tube(m.trim, 0.054, 0.016, -0.336, 0.0065, 0.012, 12);
+  a.tube(m.edge, 0.054, -0.002, -0.336, 0.0055, 0.010, 12);
+  a.box(m.accent, 0.056, 0.018, -0.282, 0.018, 0.012, 0.024, 0.001);
+  a.box(m.pad, 0, 0.060, -0.236, 0.034, 0.008, 0.058, 0.002);
+  a.line(m.dark, [[0.016, 0.058, -0.258], [0.038, 0.042, -0.272], [0.048, 0.022, -0.278]], 0.0024, 6);
+
   a.box(m.railCover, 0, -0.062, -0.275, 0.043, 0.037, 0.088, 0.004, -0.17);
   a.box(m.pad, 0, -0.079, -0.284, 0.044, 0.011, 0.075, 0.003, -0.17);
   for (let i = 0; i < 5; i++) {
@@ -397,35 +423,48 @@ function sleeve(a, m, side) {
     ? [[-0.047, -0.089, -0.222], [-0.099, -0.144, -0.149], [-0.181, -0.237, -0.022], [-0.253, -0.307, 0.154]]
     : [[0.036, -0.162, 0.105], [0.072, -0.213, 0.18], [0.119, -0.281, 0.272], [0.168, -0.377, 0.402]];
   const path = new THREE.CatmullRomCurve3(points.map(point => new V3(...point)));
-  const radii = [[0.036, 0.032], [0.034, 0.032], [0.042, 0.039], [0.039, 0.036],
-    [0.046, 0.043], [0.045, 0.04], [0.053, 0.046], [0.05, 0.045], [0.055, 0.052],
-    [0.061, 0.056], [0.064, 0.058], [0.067, 0.062], [0.069, 0.064]];
-  a.add(ellipseTube(points, radii, 20), m.linen);
+  const radii = [[0.035, 0.031], [0.037, 0.033], [0.041, 0.037], [0.044, 0.040],
+    [0.047, 0.043], [0.050, 0.045], [0.053, 0.048], [0.056, 0.051], [0.059, 0.054],
+    [0.062, 0.057], [0.065, 0.060], [0.068, 0.063], [0.070, 0.065]];
+  a.add(ellipseTube(points, radii, 24, 0.0024), m.linen);
 
-  for (const [position, radius, material] of [[0.035, 0.034, m.linenDark], [0.092, 0.034, m.linenLight],
-    [0.22, 0.041, m.linenDark], [0.36, 0.044, m.linenLight]]) {
-    const center = path.getPoint(position);
-    const axis = path.getTangent(position).normalize();
-    const across = new V3(1, 0, 0).addScaledVector(axis, -axis.x).normalize();
-    const up = new V3().crossVectors(axis, across).normalize();
-    const seam = [];
-    for (let i = 0; i <= 16; i++) {
-      const angle = i / 16 * PI * 2;
-      seam.push(center.clone().addScaledVector(across, Math.cos(angle) * radius)
-        .addScaledVector(up, Math.sin(angle) * radius * 0.92).addScaledVector(axis, Math.sin(angle * 2) * 0.007).toArray());
-    }
-    a.line(material, seam, position < 0.1 ? 0.0022 : 0.0013, 5);
+  // Structured tactical wrist cuff band and velcro closure strap
+  const cuffPoints = [0.012, 0.038, 0.065, 0.092].map(t => path.getPoint(t).toArray());
+  a.add(ellipseTube(cuffPoints, [[0.0365, 0.0325], [0.038, 0.034], [0.039, 0.035], [0.0385, 0.0345]], 20), m.linenDark);
+
+  const cuffCenter = path.getPoint(0.045);
+  a.box(m.polymer, cuffCenter.x + side * 0.034, cuffCenter.y + 0.012, cuffCenter.z, 0.012, 0.016, 0.028, 0.002, left ? 0.52 : -0.45);
+  a.box(m.accent, cuffCenter.x + side * 0.038, cuffCenter.y + 0.014, cuffCenter.z - 0.004, 0.004, 0.008, 0.014, 0.001, left ? 0.52 : -0.45);
+
+  if (left) {
+    // Left-wrist tactical field watch (band + bezel + luminous dial)
+    const watchPoints = [0.042, 0.058, 0.074].map(t => path.getPoint(t).toArray());
+    a.add(ellipseTube(watchPoints, [[0.0392, 0.0352], [0.0398, 0.0358], [0.0392, 0.0352]], 20), m.pad);
+    const wp = path.getPoint(0.058);
+    a.box(m.trim, wp.x + 0.014, wp.y + 0.031, wp.z - 0.008, 0.030, 0.010, 0.030, 0.004, 0.56, -0.32, -0.38);
+    a.box(m.steel, wp.x + 0.015, wp.y + 0.034, wp.z - 0.009, 0.025, 0.006, 0.025, 0.003, 0.56, -0.32, -0.38);
+    a.box(m.dark, wp.x + 0.016, wp.y + 0.036, wp.z - 0.010, 0.019, 0.004, 0.019, 0.002, 0.56, -0.32, -0.38);
+    a.box(m.accent, wp.x + 0.017, wp.y + 0.037, wp.z - 0.011, 0.003, 0.003, 0.011, 0.0005, 0.56, -0.32, -0.38);
   }
+
+  // Forearm utility/comms pocket panel on upper-outer forearm
+  const pocketPoints = [0.24, 0.34, 0.44, 0.54].map(t => {
+    const p = path.getPoint(t);
+    p.x += side * 0.011;
+    p.y += 0.009;
+    return p.toArray();
+  });
+  a.add(ellipseTube(pocketPoints, [[0.042, 0.038], [0.047, 0.042], [0.050, 0.045], [0.052, 0.046]], 16), m.linenLight);
 
   const seam = [];
   for (let i = 0; i < radii.length - 2; i++) {
     const t = i / (radii.length - 1);
     const p = path.getPoint(t);
-    p.x += side * radii[i][0] * 0.7;
-    p.y += radii[i][1] * 0.65;
+    p.x += side * radii[i][0] * 0.72;
+    p.y += radii[i][1] * 0.66;
     seam.push(p.toArray());
   }
-  a.line(m.linenDark, seam, 0.0015);
+  a.line(m.linenDark, seam, 0.0014);
   for (let i = 1; i < seam.length - 1; i++) {
     const from = new V3(...seam[i]);
     const next = new V3(...seam[i + 1]);
@@ -445,11 +484,12 @@ function glove(group, m, side, withSleeve = true) {
   const shift = left ? 0.024 : -0.019;
   const palm = [[x + shift * -1.0, y - 0.041, z + 0.034], [x, y - 0.016, z + 0.01],
     [x + shift * 0.2, y + 0.003, z - 0.016], [x + shift, y + 0.01, z - 0.031]];
-  a.add(ellipseTube(palm, [[0.024, 0.026], [0.029, 0.025], [0.03, 0.023],
-    [0.028, 0.02], [0.025, 0.017], [0.01, 0.009], [0.003, 0.003]], 18), m.glove);
+  a.add(ellipseTube(palm, [[0.025, 0.027], [0.030, 0.026], [0.031, 0.024],
+    [0.029, 0.021], [0.026, 0.018], [0.011, 0.0095], [0.003, 0.003]], 18), m.glove);
   const back = x + side * 0.024;
-  a.box(m.leather, back, y + 0.006, z - 0.002, 0.016, 0.032, 0.043, 0.007, left ? -0.29 : 0.23);
-  a.box(m.pad, back + side * 0.007, y + 0.009, z - 0.005, 0.008, 0.018, 0.029, 0.003, left ? -0.32 : 0.25);
+  a.box(m.leather, back, y + 0.006, z - 0.002, 0.017, 0.034, 0.045, 0.007, left ? -0.29 : 0.23);
+  a.box(m.pad, back + side * 0.007, y + 0.009, z - 0.005, 0.009, 0.022, 0.034, 0.0035, left ? -0.32 : 0.25);
+  a.box(m.trim, back + side * 0.010, y + 0.011, z - 0.012, 0.006, 0.016, 0.024, 0.002, left ? -0.32 : 0.25);
   for (let i = 0; i < 4; i++) {
     const offset = (i - 1.5) * 0.014;
     const knuckleY = y + offset * (left ? 0.45 : -0.95);
@@ -466,10 +506,13 @@ function glove(group, m, side, withSleeve = true) {
       finger[3][2] -= 0.022;
       finger[4][2] -= 0.022;
     }
-    a.add(ellipseTube(finger, [[0.009, 0.009], [0.009, 0.008], [0.008, 0.007], [0.008, 0.006],
-      [0.007, 0.006], [0.006, 0.005], [0.0017, 0.0017]], 12), m.leather);
-    a.box(m.pad, back + side * 0.004, knuckleY + 0.005, knuckleZ + 0.005,
-      0.012, 0.011, 0.017, 0.003, 0, 0, side * 0.2);
+    a.add(ellipseTube(finger, [[0.0092, 0.0092], [0.009, 0.0082], [0.0082, 0.0072], [0.008, 0.0064],
+      [0.0072, 0.0062], [0.0062, 0.0052], [0.0018, 0.0018]], 12), m.leather);
+    // Molded TPR knuckle and proximal phalanx armor pads
+    a.box(m.pad, back + side * 0.005, knuckleY + 0.005, knuckleZ + 0.005,
+      0.013, 0.012, 0.018, 0.0035, 0, 0, side * 0.2);
+    a.box(m.trim, x + side * 0.008, knuckleY + (left ? -0.012 : 0.004), knuckleZ - 0.010,
+      0.009, 0.008, 0.012, 0.002, 0, 0, side * 0.15);
     a.line(m.stitch, [[back + side * 0.009, knuckleY - 0.002, knuckleZ + 0.005],
       [back + side * 0.01, knuckleY + 0.001, knuckleZ + 0.001],
       [back + side * 0.007, knuckleY + 0.004, knuckleZ - 0.004]], 0.0009, 5);
@@ -477,9 +520,9 @@ function glove(group, m, side, withSleeve = true) {
   const thumb = left
     ? [[-0.058, -0.059, -0.22], [-0.055, -0.025, -0.239], [-0.042, -0.011, -0.261], [-0.034, -0.01, -0.279]]
     : [[0.035, -0.127, 0.113], [0.016, -0.096, 0.119], [-0.015, -0.088, 0.11], [-0.031, -0.093, 0.086]];
-  a.add(ellipseTube(thumb, [[0.013, 0.012], [0.013, 0.011], [0.011, 0.01],
-    [0.01, 0.009], [0.009, 0.008], [0.007, 0.006], [0.002, 0.002]], 14), m.glove);
-  a.box(m.pad, x, y - 0.034, z + 0.029, 0.061, 0.052, 0.022, 0.007, left ? -0.54 : -0.65);
+  a.add(ellipseTube(thumb, [[0.0135, 0.0125], [0.013, 0.011], [0.0115, 0.0102],
+    [0.0102, 0.0092], [0.0092, 0.0082], [0.0072, 0.0062], [0.002, 0.002]], 14), m.glove);
+  a.box(m.pad, x, y - 0.034, z + 0.029, 0.062, 0.053, 0.024, 0.007, left ? -0.54 : -0.65);
   a.box(m.accent, x + side * 0.027, y - 0.025, z + 0.029, 0.004, 0.013, 0.015, 0.001);
   if (withSleeve) sleeve(a, m, side);
   a.finish();
@@ -706,29 +749,36 @@ export class WeaponView {
 
     const reload = this.reloadTime >= 0 ? this.reloadProgress : 0;
     const drop = smooth(reload, 0, 0.22) * (1 - smooth(reload, 0.66, 1));
+    const magTap = Math.sin(PI * smooth(reload, 0.58, 0.72));
+    const boltSnap = this.empty ? Math.sin(PI * smooth(reload, 0.80, 0.92)) : 0;
     const examine = this.inspectTime >= 0
       ? smooth(this.inspectTime, 0, 0.45) * (1 - smooth(this.inspectTime, 1.48, 2.25))
       : 0;
     const motion = clamp(speed * 0.20, 0, 1) * (1 - this.ads * 0.90) * (grounded ? 1 : 0.22);
-    const breath = Math.sin(this.time * 2.2) * lerp(0.005, 0.00065, this.ads);
+    const breath = (Math.sin(this.time * 2.2) + 0.24 * Math.sin(this.time * 4.4 + 0.7)) * lerp(0.0044, 0.00055, this.ads);
+    const idleX = Math.cos(this.time * 1.1) * lerp(0.0018, 0.00018, this.ads);
     const lateral = Math.sin(this.step) * motion;
     const vertical = (Math.cos(this.step * 2) - 0.3) * motion;
+    const strideRoll = Math.cos(this.step) * motion;
     const sway = lerp(1, 0.08, this.ads);
     const sprintWave = Math.sin(this.step) * this.sprint;
 
     this.root.position.set(
-      lerp(0.205, 0, this.ads) + lateral * 0.012 + this.swayX * sway + this.sprint * 0.047 - examine * 0.15 - drop * 0.16,
-      lerp(-0.164, -SIGHT_HEIGHT, this.ads) + breath + vertical * 0.008 + this.swayY * sway
-        - this.sprint * 0.09 - blocked * 0.078 + drop * 0.098 - this.landing + examine * 0.057,
+      lerp(0.205, 0, this.ads) + idleX + lateral * 0.012 + this.swayX * sway
+        + this.sprint * 0.047 - examine * 0.15 - drop * 0.16 + boltSnap * 0.012,
+      lerp(-0.164, -SIGHT_HEIGHT, this.ads) + breath + vertical * 0.0082 + this.swayY * sway
+        - this.sprint * 0.09 - blocked * 0.078 + drop * 0.098 + magTap * 0.016 - this.landing + examine * 0.057,
       lerp(-0.333, -0.275, this.ads) + this.recoil * 1.38 + blocked * 0.135
-        + vertical * 0.007 + (crouch ? 0.018 : 0) - drop * 0.207 - examine * 0.12,
+        + vertical * 0.007 + (crouch ? 0.018 : 0) - drop * 0.207 - boltSnap * 0.018 - examine * 0.12,
     );
     this.root.rotation.set(
-      this.recoil * 0.83 + vertical * 0.022 - this.swayY * sway + blocked * 0.27 + this.sprint * 0.43 - drop * 0.17 + examine * 0.07,
+      this.recoil * 0.85 + vertical * 0.022 - this.swayY * sway + blocked * 0.27
+        + this.sprint * 0.43 - drop * 0.17 + magTap * 0.055 - boltSnap * 0.045 + examine * 0.07,
       lerp(0.105, 0, this.ads) + this.swayX * sway + this.recoil * this.recoilSide * 12
         - this.sprint * 0.36 + drop * 0.68 - examine * 0.73,
-      lerp(-0.067, 0, this.ads) - lateral * 0.031 + this.recoil * this.recoilSide * 10
-        + clamp(strafe, -1, 1) * 0.027 * sway + this.sprint * 0.25 + sprintWave * 0.12 - drop * 0.29 + examine * 0.43,
+      lerp(-0.067, 0, this.ads) - lateral * 0.028 - strideRoll * 0.012 + this.recoil * this.recoilSide * 10
+        + clamp(strafe, -1, 1) * 0.027 * sway + this.sprint * 0.25 + sprintWave * 0.12
+        - drop * 0.32 + boltSnap * 0.08 + examine * 0.43,
     );
 
     const pull = smooth(reload, 0.12, 0.32);

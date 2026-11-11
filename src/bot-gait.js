@@ -36,8 +36,8 @@ export class BotGait {
 
   stance(out, bot, yaw, index, ready, crouch) {
     const side = index ? 1 : -1;
-    const spread = side * (.133 + crouch * .029);
-    const stagger = (index ? -.096 : .103) * ready - side * .028;
+    const spread = side * (.132 + crouch * .036);
+    const stagger = (index ? -.072 : .096) * ready * (1 - crouch * .45) + crouch * (index ? .035 : .115) - side * .018;
     const sine = Math.sin(yaw), cosine = Math.cos(yaw);
     return out.set(
       bot.position.x + cosine * spread - sine * stagger,

@@ -11,7 +11,7 @@ const PRESETS = {
 };
 
 function skyEnvironment(renderer) {
-  const width = 128, height = 64;
+  const width = 256, height = 128;
   const data = new Float32Array(width * height * 4);
   const direction = new THREE.Vector3();
   for (let y = 0; y < height; y++) {
@@ -22,17 +22,21 @@ function skyEnvironment(renderer) {
       const phi = ((x + .5) / width - .5) * 2 * Math.PI;
       direction.set(Math.cos(phi) * horizontal, up, Math.sin(phi) * horizontal);
       const facing = Math.max(0, direction.dot(SUN));
-      const halo = facing ** 53 * .55;
-      const horizon = Math.exp(-Math.abs(up) * 6.4);
+      const halo = facing ** 42 * .75 + facing ** 8 * .18;
+      const horizon = Math.exp(-Math.abs(up) * 5.8);
+      const bounce = Math.max(0, -up);
+      const archWarmth = (.5 + .5 * Math.sin(phi * 2. + .6)) * Math.exp(-Math.abs(up - .08) * 9.);
       const base = (y * width + x) * 4;
       if (up >= 0) {
-        data[base] = .14 + horizon * .48 + halo;
-        data[base + 1] = .35 + horizon * .37 + halo * .85;
-        data[base + 2] = .76 + horizon * .045 + halo * .66;
+        data[base] = .13 + horizon * .52 + halo + archWarmth * .14;
+        data[base + 1] = .34 + horizon * .39 + halo * .86 + archWarmth * .09;
+        data[base + 2] = .78 + horizon * .06 + halo * .64;
       } else {
-        data[base] = .16 + horizon * .14;
-        data[base + 1] = .12 + horizon * .17;
-        data[base + 2] = .075 + horizon * .19;
+        // Warm sandstone & bazaar bounce light from ground and surrounding walls
+        const plaza = .22 + .12 * Math.cos(phi * 3.);
+        data[base] = (.24 + horizon * .18) * (1. - bounce * .35) + plaza * .12;
+        data[base + 1] = (.18 + horizon * .16) * (1. - bounce * .38) + plaza * .08;
+        data[base + 2] = (.12 + horizon * .14) * (1. - bounce * .42) + plaza * .05;
       }
       data[base + 3] = 1;
     }
@@ -49,17 +53,22 @@ function skyEnvironment(renderer) {
 
 const shadowVertex = /* glsl */ `
 varying vec3 mlWorld;
+varying vec3 mlWorldNormal;
 varying float mlZ;
 `;
 const shadowCoords = /* glsl */ `
 vec4 mlPoint = vec4(transformed, 1.);
+vec3 mlNorm = vec3(normal);
 #ifdef USE_BATCHING
   mlPoint = batchingMatrix * mlPoint;
+  mlNorm = mat3(batchingMatrix) * mlNorm;
 #endif
 #ifdef USE_INSTANCING
   mlPoint = instanceMatrix * mlPoint;
+  mlNorm = mat3(instanceMatrix) * mlNorm;
 #endif
 mlWorld = (modelMatrix * mlPoint).xyz;
+mlWorldNormal = normalize(mat3(modelMatrix) * mlNorm);
 mlZ = -mvPosition.z;
 `;
 
@@ -70,29 +79,55 @@ uniform int mlCount;
 uniform float mlTexel;
 uniform float mlTime;
 varying vec3 mlWorld;
+varying vec3 mlWorldNormal;
 varying float mlZ;
-float mlSingle(int cascade, vec3 world) {
-  vec4 proj = mlMatrix[cascade] * vec4(world,1.);
-  vec3 p=proj.xyz*.5+.5;
-  if(any(lessThan(p,vec3(.001))) || any(greaterThan(p,vec3(.999)))) return 1.;
-  float visibility=0.;
-  for(int i=0;i<4;i++) {
-    vec2 corner = i==0 ? vec2(-.7,-.7) : i==1 ? vec2(.7,-.7) : i==2 ? vec2(-.7,.7) : vec2(.7,.7);
-    float z=unpackRGBAToDepth(texture(mlAtlas,vec3(p.xy+corner*mlTexel,float(cascade))));
-    visibility+=step(p.z-(.00037+float(cascade)*.00018),z);
-  }
-  return visibility*.25;
+
+float mlHash(vec2 p) {
+  vec3 q = fract(vec3(p.xyx) * .1031);
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.x + q.y) * q.z);
 }
+
+float mlNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3. - 2. * f);
+  return mix(mix(mlHash(i), mlHash(i + vec2(1., 0.)), f.x),
+             mix(mlHash(i + vec2(0., 1.)), mlHash(i + vec2(1., 1.)), f.x), f.y);
+}
+
+const vec2 mlPoisson[8] = vec2[8](
+  vec2(-.613, .354), vec2(.178, -.741), vec2(-.752, -.412), vec2(.692, .481),
+  vec2(-.152, .812), vec2(.784, -.215), vec2(-.341, -.124), vec2(.245, .289)
+);
+
+float mlSingle(int cascade, vec3 world, float rot) {
+  vec4 proj = mlMatrix[cascade] * vec4(world, 1.);
+  vec3 p = proj.xyz * .5 + .5;
+  if (any(lessThan(p, vec3(.001))) || any(greaterThan(p, vec3(.999)))) return 1.;
+  float c = cos(rot), s = sin(rot);
+  mat2 basis = mat2(c, -s, s, c);
+  float radius = mlTexel * (1.28 + float(cascade) * .28);
+  float bias = .00034 + float(cascade) * .00017;
+  float visibility = 0.;
+  for (int i = 0; i < 8; i++) {
+    vec2 offset = basis * mlPoisson[i] * radius;
+    float z = unpackRGBAToDepth(texture(mlAtlas, vec3(p.xy + offset, float(cascade))));
+    visibility += step(p.z - bias, z);
+  }
+  return visibility * .125;
+}
+
 float mlShadow(vec3 world) {
-  int k=mlZ<19.?0:mlZ<47.?1:mlZ<89.?2:3;
-  if(mlCount==2) k=mlZ<19.?0:1;
-  if(mlCount==3) k=min(k,2);
-  float a=mlSingle(k,world);
-  float end=k==0?19.:k==1?47.:k==2?89.:162.;
-  float weight=smoothstep(end-4.,end,mlZ);
-  if(k<mlCount-1 && weight>.0) a=mix(a,mlSingle(k+1,world),weight);
-  float field=sin(world.x*.024+world.z*.017-mlTime*.041)*sin(world.z*.031+mlTime*.027);
-  return mix(.11,1.,a)*(1.-.135*smoothstep(.1,.91,field));
+  int k = mlZ < 19. ? 0 : mlZ < 47. ? 1 : mlZ < 89. ? 2 : 3;
+  if (mlCount == 2) k = mlZ < 19. ? 0 : 1;
+  if (mlCount == 3) k = min(k, 2);
+  float rot = mlHash(floor(gl_FragCoord.xy) + vec2(float(k) * 17.3, 9.1)) * 6.283185;
+  float a = mlSingle(k, world, rot);
+  float end = k == 0 ? 19. : k == 1 ? 47. : k == 2 ? 89. : 162.;
+  float weight = smoothstep(end - 4.5, end, mlZ);
+  if (k < mlCount - 1 && weight > .0) a = mix(a, mlSingle(k + 1, world, rot), weight);
+  float field = sin(world.x * .024 + world.z * .017 - mlTime * .041) * sin(world.z * .031 + mlTime * .027);
+  return mix(.095, 1., a) * (1. - .125 * smoothstep(.1, .91, field));
 }
 `;
 
@@ -181,6 +216,26 @@ class SunShadows {
           Object.assign(shader.uniforms, this.uniforms);
           shader.vertexShader = shadowVertex + shader.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n' + shadowCoords);
           shader.fragmentShader = shader.fragmentShader.replace('#include <packing>', '#include <packing>\n' + shadowFragment)
+            .replace('#include <color_fragment>', `#include <color_fragment>
+              {
+                float macroA = mlNoise(mlWorld.xz * .13 + vec2(mlWorld.y * .19, -mlWorld.y * .14));
+                float macroB = mlNoise(mlWorld.xz * .85 - vec2(mlWorld.y * .67, mlWorld.x * .31));
+                float groundAO = mix(mix(.77, 1., smoothstep(.0, .48, mlWorld.y)), 1., smoothstep(.45, .85, abs(mlWorldNormal.y)));
+                float soffitAO = mix(.82, 1., smoothstep(-.85, -.08, mlWorldNormal.y));
+                float sunBleach = 1. + (.045 * macroA - .022) + (.032 * macroB - .016);
+                diffuseColor.rgb *= groundAO * soffitAO * sunBleach;
+              }`)
+            .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+              {
+                float microVar = mlNoise(mlWorld.xz * 1.45 + mlWorld.y * .95) - .5;
+                roughnessFactor = clamp(roughnessFactor + microVar * .09, .08, .99);
+                if (mlWorld.y < .035 && mlWorldNormal.y > .82) {
+                  float puddle = smoothstep(.58, .79, mlNoise(mlWorld.xz * .21 + vec2(3.7, -6.2)))
+                    * smoothstep(5.8, 1.4, abs(mlWorld.x));
+                  roughnessFactor = mix(roughnessFactor, .16, puddle * .68);
+                  diffuseColor.rgb *= 1. - puddle * .22;
+                }
+              }`)
             .replace('#include <lights_fragment_begin>', THREE.ShaderChunk.lights_fragment_begin.replace(
               'getDirectionalLightInfo( directionalLight, directLight );',
               'getDirectionalLightInfo( directionalLight, directLight );\n directLight.color *= mlShadow(mlWorld);',
@@ -343,6 +398,8 @@ export class RenderGraph {
     });
     this.temporal = screenMaterial(S.temporal, {
       currentColor: null, history: null, depthNormal: null, velocity: null, ao: null,
+      mlAtlas: null, mlMatrix0: this.shadows.matrices[0], mlMatrix1: this.shadows.matrices[1],
+      inverseVP: this.inverseVP, eye: camera.position, sun: SUN, frame: 0,
       texel: this.texel, aoTexel: this.aoTexel, valid: 0, applyAO: 1, lowPrecision: this.lowPrecision,
     });
     this.bloom = screenMaterial(S.bloom, { image: null, hands: null, texel: new THREE.Vector2(), first: 1 });
@@ -532,6 +589,7 @@ export class RenderGraph {
     this.pass(this.temporal, this.history[next], {
       currentColor: this.sceneColor.texture, history: this.history[this.index].texture,
       depthNormal, velocity, ao: this.aoHistory[next].texture,
+      mlAtlas: this.shadows.uniforms.mlAtlas.value, frame: this.frame % 32,
       applyAO: Number(Boolean(preset.ao)), valid: this.valid && preset.ao ? 1 : 0,
     });
     const image = this.history[next].texture;

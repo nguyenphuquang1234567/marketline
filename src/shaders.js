@@ -45,9 +45,19 @@ void main() {
   float haze = exp(-up*6.4);
   float rayleigh = .73 + .27 * sunDot * sunDot;
   float mie = .007 * (1.-.78*.78) / pow(max(.012,1.+.78*.78-1.56*sunDot),1.5);
-  vec3 color = mix(vec3(.073,.312,.82)*rayleigh, vec3(.61,.73,.79),haze);
-  color += vec3(.75,.53,.32) * mie;
-  color += vec3(9.,7.3,5.6) * smoothstep(.99959,.99978,sunDot);
+  vec3 color = mix(vec3(.068,.298,.81)*rayleigh, vec3(.64,.74,.79),haze);
+  color += vec3(.78,.55,.33) * mie;
+  color += vec3(.22,.14,.07) * pow(sunDot, 6.) * haze;
+  color += vec3(9.5,7.6,5.8) * smoothstep(.99959,.99978,sunDot);
+  if (up > .002 && up < .065) {
+    float az = atan(dir.x, dir.z);
+    float ridge1 = .018 + .014 * fbm(vec2(az * 2.8 + 1.7, 0.5));
+    float ridge2 = .011 + .009 * fbm(vec2(az * 5.4 - 3.1, 1.9));
+    float duneMask = (1. - smoothstep(ridge1 - .003, ridge1 + .003, up)) * .38
+                   + (1. - smoothstep(ridge2 - .002, ridge2 + .002, up)) * .28;
+    vec3 duneTint = mix(vec3(.52,.47,.42), vec3(.74,.61,.47), pow(sunDot, 2.));
+    color = mix(color, duneTint, clamp(duneMask, 0., .62));
+  }
   if (up > .016) {
     vec2 projected = eye.xz / 620. + dir.xz / max(up,.034) * 1.09;
     vec2 drift = vec2(time*.006,time*.0026);
@@ -174,18 +184,42 @@ uniform sampler2D history;
 uniform sampler2D depthNormal;
 uniform sampler2D velocity;
 uniform sampler2D ao;
+uniform highp sampler2DArray mlAtlas;
+uniform mat4 mlMatrix0;
+uniform mat4 mlMatrix1;
+uniform mat4 inverseVP;
+uniform vec3 eye;
+uniform vec3 sun;
+uniform float frame;
 uniform vec2 texel;
 uniform vec2 aoTexel;
 uniform float valid;
 uniform float applyAO;
 uniform float lowPrecision;
 out vec4 pixel;
+#include <packing>
 vec3 yCoCg(vec3 c){return vec3(dot(c,vec3(.25,.5,.25)),.5*(c.r-c.b),.5*c.g-.25*(c.r+c.b));}
 vec3 rgb(vec3 c){return vec3(c.x+c.y-c.z,c.x+c.z,c.x-c.y-c.z);}
 float depth(vec4 v) { return lowPrecision>.5 ? exp2(clamp(v.b,0.,1.)*8.)-1. : v.b; }
+float shadowTap(vec3 world) {
+  vec4 p0 = mlMatrix0 * vec4(world, 1.);
+  vec3 u0 = p0.xyz * .5 + .5;
+  if (all(greaterThan(u0, vec3(.002))) && all(lessThan(u0, vec3(.998)))) {
+    float z0 = unpackRGBAToDepth(texture(mlAtlas, vec3(u0.xy, 0.)));
+    return step(u0.z - .0006, z0);
+  }
+  vec4 p1 = mlMatrix1 * vec4(world, 1.);
+  vec3 u1 = p1.xyz * .5 + .5;
+  if (all(greaterThan(u1, vec3(.002))) && all(lessThan(u1, vec3(.998)))) {
+    float z1 = unpackRGBAToDepth(texture(mlAtlas, vec3(u1.xy, 1.)));
+    return step(u1.z - .0009, z1);
+  }
+  return 1.;
+}
 void main() {
   vec4 d=texture(depthNormal,uvScreen);
-  float z=log2(1.+depth(d))/8.;
+  float linZ=depth(d);
+  float z=log2(1.+linZ)/8.;
   vec3 src=texture(currentColor,uvScreen).rgb;
   if(applyAO>.5 && d.a>.5) {
     float light=0., weights=0.;
@@ -197,7 +231,24 @@ void main() {
       float weight=exp(-abs(s.y-z)*220.-length(dn.rg-d.rg)*3.2);
       light+=s.x*weight;weights+=weight;
     }
-    src*=mix(1.,(light+.02)/(weights+.02),.76);
+    src*=mix(1.,(light+.02)/(weights+.02),.81);
+  }
+  if(applyAO>.5) {
+    vec4 farP = inverseVP * vec4(uvScreen*2.-1., 1., 1.);
+    vec3 rayDir = normalize(farP.xyz / farP.w - eye);
+    float marchDist = min(d.a > .5 ? linZ : 42., 38.);
+    float sunAlign = max(0., dot(rayDir, sun));
+    float phase = .22 + .78 * pow(sunAlign, 4.5);
+    float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy + vec2(frame * 5.17, frame * 3.83), vec2(.06711056, .00583715))));
+    float shaft = 0.;
+    for(int s=0; s<6; s++) {
+      float t = ((float(s) + ign) / 6.) * marchDist;
+      vec3 wp = eye + rayDir * t;
+      float heightAtten = exp(-max(0., wp.y) * .11);
+      shaft += shadowTap(wp) * heightAtten;
+    }
+    shaft = (shaft / 6.) * smoothstep(2.5, 28., marchDist) * phase;
+    src += vec3(1.18, .92, .62) * shaft * .095;
   }
   vec3 cur=yCoCg(src), lo=cur, hi=cur;
   for(int i=0;i<4;i++) {
@@ -322,6 +373,17 @@ void main() {
     uv+=sin(vec2(diff.y,diff.x)*164.+time*14.)*refraction*.00155;
   }
   vec3 c=texture(image,uv).rgb;
+  if(blur<=.01 || length(motion.rg-.5)<=.0014){
+    vec3 nN = texture(image, uv + vec2(0., -texel.y)).rgb;
+    vec3 nS = texture(image, uv + vec2(0., texel.y)).rgb;
+    vec3 nW = texture(image, uv + vec2(-texel.x, 0.)).rgb;
+    vec3 nE = texture(image, uv + vec2(texel.x, 0.)).rgb;
+    vec3 minC = min(c, min(min(nN, nS), min(nW, nE)));
+    vec3 maxC = max(c, max(max(nN, nS), max(nW, nE)));
+    vec3 contrast = clamp(min(minC, 2. - maxC) / max(maxC, vec3(.0001)), 0., 1.);
+    vec3 wSharp = -sqrt(contrast) * .115;
+    c = max(vec3(0.), (c + (nN + nS + nW + nE) * wSharp) / (1. + 4. * wSharp));
+  }
   if(blur>.01 && length(motion.rg-.5)>.0014){
     vec2 v=(motion.rg-.5)*2.;
     vec2 maxV=vec2(0);
