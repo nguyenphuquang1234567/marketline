@@ -700,7 +700,10 @@ export class BotRig {
   }
 
   tumbleRifle(physics, dt) {
-    this.dropRotation.slerp(this.restRotation, 1 - Math.exp(-dt * (this.rifleSettled ? 19 : 6.8)));
+    // Let a released rifle clear the hands before the stock turns toward the floor.
+    if (!this.soldier || this.age > .075) {
+      this.dropRotation.slerp(this.restRotation, 1 - Math.exp(-dt * (this.rifleSettled ? 19 : 6.8)));
+    }
     if (this.rifleSettled) return;
     this.dropVelocity.y -= dt * 11;
     this.dropTravel.copy(this.dropVelocity).multiplyScalar(dt);
@@ -733,9 +736,22 @@ export class BotRig {
       return;
     }
     if (this.age > 2.3) return;
-    this.tumbleRifle(physics, dt);
     if (this.soldier) {
+      const release = !this.soldier.fallClip;
       this.soldier.tumble(physics, this.age, dt);
+      if (release) {
+        // Let the rifle land ahead of the legs. A wall turns the drop along
+        // its face so the weapon does not rebound into the seated body.
+        const yaw = this.soldier.fallYaw + this.soldier.coverTurn;
+        const forward = this.temp.set(0, 0, -1).applyAxisAngle(UP, yaw);
+        this.dropVelocity.addScaledVector(forward, Math.max(0, 2.1 - this.dropVelocity.dot(forward)));
+        if (this.soldier.coverWall) {
+          const normal = this.soldier.coverNormal;
+          this.dropVelocity.addScaledVector(normal, .36 - this.dropVelocity.dot(normal));
+          this.restRotation.setFromEuler(this.footRotation.set(0, yaw + .12, Math.PI * .48, 'YXZ'));
+        }
+      }
+      this.tumbleRifle(physics, dt);
       this.skin.rifle.position.copy(this.dropPoint);
       this.skin.rifle.quaternion.copy(this.dropRotation);
       this.skin.magazine.position.copy(this.dropPoint);
@@ -743,6 +759,7 @@ export class BotRig {
       this.skin.magazine.scale.setScalar(this.magazineDroppedWithRifle ? 1 : .002);
       return;
     }
+    this.tumbleRifle(physics, dt);
     for (let index = 0; index < this.joints.length; index += 1) {
       const point = this.joints[index];
       const old = this.previous[index];

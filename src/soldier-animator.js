@@ -6,8 +6,8 @@ import { SoldierFootPlacement } from './soldier-foot-placement.js';
 const { clamp, lerp, smoothstep } = MathUtils;
 const UP = new Vector3(0, 1, 0);
 const DOWN = new Vector3(0, -1, 0);
-const RIGHT = new Vector3(1, 0, 0);
 const FORWARD = new Vector3(0, 0, -1);
+const WALL_GAP = .008;
 
 const locomotion = {
   walk: [1.45, .59], run: [2.12, .45], sprint: [2.49, .38],
@@ -19,9 +19,8 @@ const BODY_CONTACTS = [
   ['pelvis', .135], ['chest', .125], ['head', .12],
   ['upper_armL', .09], ['upper_armR', .09], ['shinL', .085], ['shinR', .085],
 ];
-
 export class SoldierAnimator {
-  constructor({ root, clips }, group) {
+  constructor({ root, clips, fallSurface }, group) {
     this.root = clone(root);
     group.add(this.root);
     this.mesh = this.root.getObjectByProperty('isSkinnedMesh', true);
@@ -29,11 +28,14 @@ export class SoldierAnimator {
     this.mesh.receiveShadow = true;
     this.mesh.frustumCulled = false;
     this.clips = clips;
+    this.fallSurface = fallSurface;
     this.bones = new Map(this.mesh.skeleton.bones.map(bone => [bone.name, bone]));
     this.rifle = this.bones.get('RifleSocket');
     this.magazine = this.bones.get('MagazineSocket');
     this.chest = this.bones.get('chest');
     this.head = this.bones.get('head');
+    this.aimParts = [this.bones.get('clavicleL'), this.bones.get('clavicleR'), this.rifle];
+    this.aimPivot = new Vector3();
     this.root.updateMatrixWorld(true);
     this.feet = new SoldierFootPlacement(this.bones);
     this.parts = [this.root, ...this.bones.values()].map(mesh => ({ mesh }));
@@ -49,6 +51,7 @@ export class SoldierAnimator {
     this.point = new Vector3();
     this.fallImpulse = new Vector3();
     this.fallOrigin = new Vector3();
+    this.coverNormal = new Vector3();
     this.fallStart = [];
     this.blends = [];
   }
@@ -237,7 +240,7 @@ export class SoldierAnimator {
     this.reloadSpan = remaining > 0 ? Math.max(this.reloadSpan, remaining) : 0;
     this.reloadPhase = this.reloadSpan > 0 ? 1 - remaining / this.reloadSpan : 0;
     const reloadWeight = smoothstep(this.reloadPhase, 0, .095) * (1 - smoothstep(this.reloadPhase, .92, 1));
-    this.clip('reload', this.reloadPhase, reloadWeight, true);
+    this.upperPair('reload', 'reload_crouch', this.reloadPhase, this.crouch, reloadWeight);
     this.fireTime += dt;
     this.hitTime += dt;
     this.overlay('fire', this.fireTime, (1 - reloadWeight) * .94);
@@ -251,9 +254,15 @@ export class SoldierAnimator {
     const aimCorrection = this.aim * (1 - reloadWeight) * (this.fireTime < .11 ? .61 : .93);
     this.delta.setFromUnitVectors(this.targetDirection, this.point);
     this.reference.identity().slerp(this.delta, aimCorrection);
-    this.chest.getWorldQuaternion(this.rotation);
-    this.chest.parent.getWorldQuaternion(this.parent).invert();
-    this.chest.quaternion.copy(this.parent).multiply(this.reference).multiply(this.rotation).normalize();
+    // Aim the rifle and both arms together around the collar. The upper back
+    // and head keep the lean from the crouch clip when the muzzle levels out.
+    this.chest.getWorldQuaternion(this.parent);
+    this.delta.copy(this.parent).invert().multiply(this.reference).multiply(this.parent);
+    this.aimPivot.copy(this.aimParts[0].position).lerp(this.aimParts[1].position, .5);
+    for (const bone of this.aimParts) {
+      bone.position.sub(this.aimPivot).applyQuaternion(this.delta).add(this.aimPivot);
+      bone.quaternion.premultiply(this.delta).normalize();
+    }
     this.chest.updateMatrixWorld(true);
 
     if (grounded) {
@@ -290,6 +299,9 @@ export class SoldierAnimator {
 
   fall(direction) {
     this.fallClip = null;
+    this.coverWall = null;
+    this.fallYaw = this.yaw;
+    this.coverTurn = 0;
     this.fallOrigin.copy(this.root.position);
     this.fallImpulse.copy(direction).applyAxisAngle(UP, -this.yaw);
     this.fallStart = [...this.bones.values()].map(bone => ({
@@ -297,20 +309,80 @@ export class SoldierAnimator {
     }));
   }
 
-  tumble(physics, age, dt) {
-    if (!this.fallClip) {
-      const { x, z } = this.fallImpulse;
-      const sideways = Math.abs(x) > Math.abs(z);
-      const name = sideways ? (x > 0 ? 'right' : 'left') : (z > 0 ? 'back' : 'forward');
-      this.sampleVector.copy(sideways ? RIGHT : FORWARD).multiplyScalar(sideways ? Math.sign(x) : -Math.sign(z));
-      this.sampleVector.applyQuaternion(this.root.quaternion).multiplyScalar(.94);
-      this.point.copy(this.fallOrigin).addScaledVector(UP, .32);
-      const obstruction = physics.sphereCast(this.point, this.sampleVector, .22);
-      this.fallClip = obstruction ? 'death_collapse' : 'death_' + name;
-      this.fallLift = 0;
+  chooseFall(physics) {
+    const { x, z } = this.fallImpulse;
+    const sideways = Math.abs(x) > Math.abs(z);
+    const name = sideways ? (x > 0 ? 'right' : 'left') : (z > 0 ? 'back' : 'forward');
+    this.fallClip = 'death_' + name;
+    this.fallLift = 0;
+    this.sampleVector.set(x, 0, z).normalize();
+    this.sampleVector.applyQuaternion(this.root.quaternion).multiplyScalar(.88);
+    this.point.copy(this.fallOrigin).addScaledVector(UP, .67);
+    const wall = physics.sphereCast(this.point, this.sampleVector, .22);
+    if (!wall?.collider.max || Math.abs(wall.normal.y) > .28) return;
+
+    const axis = Math.abs(wall.normal.x) > Math.abs(wall.normal.z) ? 0 : 2;
+    const sign = Math.sign(wall.normal.getComponent(axis));
+    this.coverNormal.set(0, 0, 0).setComponent(axis, sign);
+    const face = sign > 0 ? wall.collider.max : wall.collider.min;
+    this.coverPlane = face.getComponent(axis) * sign;
+    const clearance = this.fallOrigin.dot(this.coverNormal) - this.coverPlane;
+    if (clearance < .04 || clearance > 1.02) return;
+
+    // Turn tangentially so a shoulder, rather than the face, receives the hit.
+    const rightTowardWall = Math.atan2(this.coverNormal.z, -this.coverNormal.x);
+    const rightTurn = angleDelta(rightTowardWall, this.fallYaw);
+    const leftTurn = angleDelta(rightTowardWall + Math.PI, this.fallYaw);
+    const right = Math.abs(rightTurn) <= Math.abs(leftTurn);
+    this.coverTurn = right ? rightTurn : leftTurn;
+    this.coverShoulder = right ? 'upper_armR' : 'upper_armL';
+    this.coverWall = wall.collider;
+    this.coverTangent = axis === 0 ? 2 : 0;
+    this.fallClip = right ? 'death_cover_right' : 'death_cover_left';
+  }
+
+  supportFall(physics, age, dt) {
+    const wall = this.coverWall;
+    let clearance = Infinity;
+    let shoulderClearance = Infinity;
+    let lift = 0;
+    // Skin vertices at the extremities of each body part include the fingers,
+    // boot sides and gear that can reach a surface before their joints do.
+    for (const { vertex, bone } of this.fallSurface) {
+      this.mesh.getVertexPosition(vertex, this.point).applyMatrix4(this.mesh.matrixWorld);
+      lift = Math.max(lift, .005 - this.point.y);
+      if (!wall || this.point.y < wall.min.y - .01 || this.point.y > wall.max.y + .01) continue;
+      const along = this.point.getComponent(this.coverTangent);
+      if (along < wall.min.getComponent(this.coverTangent) - .01 || along > wall.max.getComponent(this.coverTangent) + .01) continue;
+      const gap = this.point.dot(this.coverNormal) - this.coverPlane;
+      clearance = Math.min(clearance, gap);
+      if (bone === this.coverShoulder) shoulderClearance = Math.min(shoulderClearance, gap);
     }
+    if (clearance < Infinity) {
+      const approach = shoulderClearance < Infinity
+        ? Math.min(.66, shoulderClearance - WALL_GAP) * smoothstep(age, .07, .40) : 0;
+      this.root.position.addScaledVector(this.coverNormal, -Math.min(clearance - WALL_GAP, approach));
+      this.root.updateMatrixWorld(true);
+    }
+    // Retain separate probes for raised terrain beneath the body.
+    for (const [name, radius] of BODY_CONTACTS) {
+      this.bones.get(name).getWorldPosition(this.point);
+      const low = this.point.y - radius;
+      this.point.y = this.fallOrigin.y + .52;
+      const floor = physics.raycast(this.point, DOWN, 1.02);
+      if (floor?.normal.y > .64 && floor.point.y > .005 && floor.point.y < this.fallOrigin.y + .37) {
+        lift = Math.max(lift, floor.point.y - low);
+      }
+    }
+    this.fallLift = Math.max(lift, lerp(this.fallLift, lift, 1 - Math.exp(-dt * 19)));
+    this.root.position.y += this.fallLift;
+  }
+
+  tumble(physics, age, dt) {
+    if (!this.fallClip) this.chooseFall(physics);
     const phase = clamp(age / this.clips.get(this.fallClip).duration, 0, 1);
     this.root.position.copy(this.fallOrigin);
+    this.root.quaternion.setFromAxisAngle(UP, this.fallYaw + this.coverTurn * smoothstep(age, .055, .39));
     this.clip(this.fallClip, phase);
     const blend = 1 - smoothstep(age, 0, .19);
     for (const { bone, position, quaternion, scale } of this.fallStart) {
@@ -319,16 +391,7 @@ export class SoldierAnimator {
       bone.scale.lerp(scale, blend);
     }
     this.root.updateMatrixWorld(true);
-    let lift = 0;
-    for (const [name, radius] of BODY_CONTACTS) {
-      this.bones.get(name).getWorldPosition(this.point);
-      const low = this.point.y - radius;
-      this.point.y = this.fallOrigin.y + .52;
-      const floor = physics.raycast(this.point, DOWN, 1.02);
-      if (floor?.normal.y > .64 && floor.point.y < this.fallOrigin.y + .37) lift = Math.max(lift, floor.point.y - low);
-    }
-    this.fallLift = Math.max(lift, lerp(this.fallLift, lift, 1 - Math.exp(-dt * 19)));
-    this.root.position.y += this.fallLift;
+    this.supportFall(physics, age, dt);
   }
 
   dispose() { this.mesh.skeleton.dispose(); }
