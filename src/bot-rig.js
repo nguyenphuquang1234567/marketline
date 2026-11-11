@@ -135,22 +135,61 @@ function parts(detail) {
 
 function makeRifle(group, detail, metal) {
   const gun = parts(detail);
-  gun.box(0.064, 0.094, 0.205, 0, 0.03, -0.044, '#292d2c');
-  gun.box(0.058, 0.07, 0.24, 0, 0.043, -0.257, '#414241');
-  gun.box(0.069, 0.042, 0.11, 0, 0.082, -0.035, '#161819');
-  gun.box(0.046, 0.065, 0.058, 0, -0.04, 0.034, '#272724');
-  gun.box(0.05, 0.135, 0.072, 0, -0.046, -0.098, '#373932');
-  gun.box(0.048, 0.013, 0.079, 0, -0.113, -0.098, '#535650', 0);
-  gun.box(0.051, 0.032, 0.16, 0, 0.027, 0.127, '#3b3d37');
-  gun.box(0.047, 0.104, 0.054, 0, 0.028, 0.205, '#222624');
-  gun.cylinder(0.011, 0.011, 0.15, 0, 0.042, -0.432, '#262b2c', true);
-  gun.cylinder(0.016, 0.016, 0.045, 0, 0.042, -0.501, '#424744', true);
-  gun.cylinder(0.021, 0.021, 0.076, 0, 0.121, -0.06, '#333b36', true);
-  gun.cylinder(0.017, 0.017, 0.002, 0, 0.121, -0.099, '#4c7474', true);
-  for (let index = 0; index < 6; index += 1) {
-    gun.box(0.066, 0.009, 0.011, 0, 0.083, -0.174 - index * 0.034, '#676a61', 0);
-    for (const side of [-1, 1]) {
-      gun.box(0.0015, 0.013, 0.021, side * 0.03, 0.043, -0.175 - index * 0.033, '#242726', 0);
+  // Upper and lower receiver with flared magwell, trigger guard, and brass deflector.
+  gun.box(0.062, 0.056, 0.215, 0, 0.048, -0.038, '#2b302f', 0.006);
+  gun.box(0.058, 0.046, 0.195, 0, 0.004, -0.025, '#202423', 0.005);
+  gun.box(0.062, 0.058, 0.078, 0, -0.026, -0.095, '#262a29', 0.005);
+  gun.box(0.066, 0.012, 0.084, 0, -0.052, -0.095, '#353a38', 0.002);
+  gun.box(0.018, 0.008, 0.052, 0, -0.052, 0.002, '#1c201f', 0.002);
+  gun.box(0.008, 0.022, 0.010, 0, -0.036, 0.010, '#474d4b', 0.001);
+
+  // Free-float M-LOK handguard and barrel shroud.
+  gun.box(0.054, 0.066, 0.255, 0, 0.044, -0.268, '#3d413b', 0.007);
+  gun.box(0.038, 0.022, 0.248, 0, 0.012, -0.266, '#282c29', 0.004);
+  // Angled foregrip (AFG) and rail covers.
+  gun.box(0.042, 0.032, 0.092, 0, -0.002, -0.248, '#232623', 0.004);
+  gun.box(0.036, 0.022, 0.034, 0, -0.016, -0.282, '#1b1e1c', 0.003);
+
+  // Top picatinny rail and backup iron sights.
+  gun.box(0.044, 0.012, 0.445, 0, 0.080, -0.165, '#1e2221', 0.002);
+  gun.box(0.036, 0.022, 0.024, 0, 0.092, 0.042, '#252928', 0.002);
+  gun.box(0.034, 0.024, 0.022, 0, 0.092, -0.372, '#252928', 0.002);
+
+  // Pistol grip and curved 30-round STANAG/polymer magazine with Magpul floorplate.
+  gun.box(0.042, 0.088, 0.054, 0, -0.048, 0.044, '#232521', 0.006);
+  gun.box(0.044, 0.016, 0.058, 0, -0.090, 0.048, '#181a18', 0.003);
+  gun.box(0.046, 0.092, 0.066, 0, -0.068, -0.096, '#363931', 0.005);
+  gun.box(0.046, 0.072, 0.064, 0, -0.132, -0.108, '#2e312a', 0.005);
+  gun.box(0.050, 0.016, 0.070, 0, -0.168, -0.112, '#1c1e1b', 0.003);
+
+  // Buffer tube and SOPMOD collapsible buttstock with cheek rest and rubber pad.
+  gun.cylinder(0.018, 0.018, 0.165, 0, 0.038, 0.145, '#252928', true);
+  gun.box(0.048, 0.048, 0.145, 0, 0.034, 0.162, '#363933', 0.006);
+  gun.box(0.044, 0.112, 0.048, 0, 0.012, 0.214, '#292c28', 0.005);
+  gun.box(0.048, 0.116, 0.018, 0, 0.010, 0.242, '#171918', 0.004);
+
+  // Barrel, gas block, and multi-prong flash suppressor.
+  gun.cylinder(0.011, 0.011, 0.155, 0, 0.042, -0.435, '#202526', true);
+  gun.box(0.024, 0.032, 0.028, 0, 0.050, -0.398, '#2d3231', 0.003);
+  gun.cylinder(0.015, 0.014, 0.048, 0, 0.042, -0.502, '#3c4240', true);
+
+  // Riser mount and red-dot combat optic.
+  gun.box(0.046, 0.024, 0.078, 0, 0.094, -0.058, '#202423', 0.003);
+  gun.cylinder(0.022, 0.022, 0.082, 0, 0.122, -0.058, '#313835', true);
+  gun.cylinder(0.018, 0.018, 0.003, 0, 0.122, -0.100, '#4f8280', true);
+  gun.cylinder(0.018, 0.018, 0.003, 0, 0.122, -0.016, '#2b4747', true);
+
+  if (detail) {
+    // Top-mounted AN/PEQ-15 tactical laser module and handguard Picatinny/M-LOK slots.
+    gun.box(0.048, 0.022, 0.068, 0, 0.094, -0.285, '#4a473b', 0.003);
+    gun.cylinder(0.006, 0.006, 0.014, 0.012, 0.095, -0.322, '#1b1f1e', true);
+    gun.box(0.010, 0.018, 0.056, 0.031, 0.048, -0.032, '#141717', 0.001);
+    for (let index = 0; index < 8; index += 1) {
+      const z = -0.135 - index * 0.030;
+      gun.box(0.048, 0.006, 0.012, 0, 0.086, z, '#555952', 0);
+      for (const side of [-1, 1]) {
+        gun.box(0.003, 0.014, 0.020, side * 0.027, 0.044, z, '#1b1e1d', 0);
+      }
     }
   }
   return gun.mesh(group, metal);
@@ -160,17 +199,21 @@ function makeOperative(group, index, team, detail, clothMaterial, fabric, metal)
   const [cloth, vest, gear, boot] = PALETTES[index];
   const insignia = team === 0 ? '#458bb3' : '#bc5343';
   const edging = team === 0 ? '#2e536b' : '#753e35';
+  const trouserColor = new Color(cloth).lerp(new Color(vest), 0.48).lerp(new Color(boot), 0.22).getHex();
   const torso = parts(detail);
   torso.garment([
-    [-.098, .099, .059], [-.078, .142, .082], [-.045, .163, .099], [.014, .169, .107],
-    [.11, .145, .106], [.18, .149, .103], [.239, .157, .108], [.327, .172, .117],
-    [.407, .176, .112], [.453, .163, .102], [.486, .121, .081], [.515, .068, .068],
-    [.569, .057, .059],
-  ], cloth, index);
-  // The roll collar bridges the head and shoulder seam and follows the shirt.
+    [-.098, .096, .058], [-.076, .136, .080], [-.042, .154, .094], [.018, .156, .098],
+    [.072, .142, .092], [.135, .144, .096], [.215, .154, .104], [.315, .172, .115],
+    [.405, .178, .112], [.455, .164, .102], [.488, .122, .082], [.518, .070, .068],
+    [.569, .058, .060],
+  ], cloth, index, { minY: -0.12, maxY: 0.058, color: trouserColor });
+  // Structured combat shirt collar and quarter-zip placket.
   torso.garment([
-    [.484, .077, .075], [.512, .073, .072], [.546, .067, .066], [.579, .063, .064], [.591, .058, .061],
+    [.482, .080, .078], [.512, .075, .074], [.548, .069, .068], [.580, .064, .065], [.592, .059, .062],
   ], vest, index + 4);
+  if (detail) {
+    torso.box(0.016, 0.095, 0.012, 0, 0.515, -0.072, boot, 0.002);
+  }
   addKit(torso, { detail, index, team, cloth, vest, gear, boot, insignia, edging });
 
   const head = parts(detail);
@@ -180,35 +223,43 @@ function makeOperative(group, index, team, detail, clothMaterial, fabric, metal)
   for (const side of [-1, 1]) {
     const shoe = parts(detail);
     const shoeSections = [
-      [-.216, .029, -.075, -.045], [-.204, .05, -.079, -.029], [-.171, .061, -.078, -.006],
-      [-.117, .062, -.078, .022], [-.072, .057, -.078, .057], [-.023, .053, -.078, .071],
-      [.025, .055, -.078, .067], [.052, .053, -.078, .05], [.068, .034, -.075, .018],
+      [-.216, .029, -.075, -.044], [-.202, .051, -.079, -.026], [-.168, .062, -.078, -.002],
+      [-.114, .063, -.078, .028], [-.068, .058, -.078, .066], [-.020, .055, -.078, .092],
+      [.028, .056, -.078, .088], [.054, .053, -.078, .062], [.068, .035, -.075, .022],
     ];
     shoe.geometry(bootLoft(shoeSections, detail ? 16 : 10), boot);
-    const tread = shoeSections.map(([z, width]) => [z * 1.025, width * 1.055, -.086, -.061]);
-    shoe.geometry(bootLoft(tread, detail ? 16 : 10), '#36372f');
+    const tread = shoeSections.map(([z, width]) => [z * 1.025, width * 1.06, -.086, -.058]);
+    shoe.geometry(bootLoft(tread, detail ? 16 : 10), '#242520');
+    // Molded toe cap, heel counter, and ankle cuff reinforcement.
+    shoe.box(.084, .032, .058, 0, -.052, -.182, '#1d1e1a', .008);
+    shoe.box(.082, .056, .048, 0, -.036, .042, '#1d1e1a', .008);
     if (detail) {
       for (let lace = 0; lace < 5; lace++) {
-        shoe.box(.058 - lace * .003, .006, .009, 0, .046 - lace * .011, -.075 - lace * .014, '#555246', .002);
+        shoe.box(.060 - lace * .003, .007, .010, 0, .052 - lace * .011, -.072 - lace * .014, '#5c584b', .002);
       }
       for (const edge of [-1, 1]) {
-        shoe.box(.006, .011, .108, edge * .053, -.051, -.057, '#5d5748', .002);
+        shoe.box(.008, .036, .112, edge * .054, -.028, -.052, gear, .003);
       }
     }
     const glove = parts(detail);
     glove.garment([
-      [-.048, .021, .033, .001], [-.033, .031, .043, -.008], [-.007, .036, .044, -.011],
-      [.022, .035, .043, -.012], [.034, .026, .036, -.004], [.043, .017, .025, -.002],
+      [-.052, .022, .034, .001], [-.035, .033, .045, -.008], [-.006, .038, .046, -.011],
+      [.024, .037, .045, -.012], [.038, .029, .038, -.005], [.048, .020, .028, -.002],
     ], boot, index + side);
-    glove.round(.034, .057, .058, side * -.027, .006, -.022, gear);
+    // Molded knuckle armor plate and thumb support.
+    glove.box(.064, .018, .042, 0, .022, -.012, gear, .005);
+    glove.round(.036, .058, .060, side * -.028, .006, -.022, gear);
     if (detail) {
       for (let knuckle = 0; knuckle < 4; knuckle++) {
-        glove.round(.018, .02, .024, -.025 + knuckle * .016, .019 - Math.abs(knuckle - 1.5) * .004, -.043, boot);
+        const kx = -.025 + knuckle * .0165;
+        const ky = .021 - Math.abs(knuckle - 1.5) * .0035;
+        glove.round(.019, .022, .026, kx, ky, -.044, '#1b1d1a');
+        glove.round(.016, .018, .028, kx, ky - .012, -.058, boot);
       }
     }
     limbs.push({ shoe: shoe.mesh(group, clothMaterial), glove: glove.mesh(group, clothMaterial) });
   }
-  const uniform = new OperativeUniform(group, detail, index, fabric, cloth, insignia);
+  const uniform = new OperativeUniform(group, detail, index, fabric, cloth, insignia, vest, gear, boot);
   return { torso: torso.mesh(group, clothMaterial), head: head.mesh(group, clothMaterial), limbs, uniform, rifle: makeRifle(group, detail, metal) };
 }
 
@@ -248,13 +299,14 @@ function bootLoft(sections, sides) {
 }
 
 function wovenFabric() {
-  const size = 64, rgba = new Uint8Array(size * size * 4);
+  const size = 128, rgba = new Uint8Array(size * size * 4);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const crossing = ((x >> 2) + (y >> 2)) % 2;
+      const ripstop = x % 16 === 0 || y % 16 === 0 ? 5 : 0;
       const warp = Math.cos(x * Math.PI * .5), weft = Math.cos(y * Math.PI * .5);
       const fibre = Math.imul(x + 53, y + 97) % 13 - 6;
-      const shade = 235 + 7 * (crossing ? warp + weft * .42 : weft + warp * .42) + fibre;
+      const shade = Math.min(255, Math.max(196, 234 + 7 * (crossing ? warp + weft * .42 : weft + warp * .42) + ripstop + fibre));
       const i = (y * size + x) * 4;
       rgba[i] = rgba[i + 1] = rgba[i + 2] = shade;
       rgba[i + 3] = 255;
@@ -266,15 +318,21 @@ function wovenFabric() {
   texture.magFilter = LinearFilter;
   texture.generateMipmaps = true;
   texture.needsUpdate = true;
-  return new MeshStandardMaterial({ vertexColors: true, roughness: .91, map: texture, bumpMap: texture, bumpScale: .009 });
+  return new MeshStandardMaterial({ vertexColors: true, roughness: .89, map: texture, bumpMap: texture, bumpScale: .011 });
 }
 
 export class BotRig {
   constructor(group, index, team) {
     this.group = group;
-    this.cloth = new MeshStandardMaterial({ vertexColors: true, roughness: 0.86 });
     this.fabric = wovenFabric();
-    this.metal = new MeshStandardMaterial({ vertexColors: true, roughness: 0.52, metalness: 0.3 });
+    this.cloth = new MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.84,
+      map: this.fabric.map,
+      bumpMap: this.fabric.map,
+      bumpScale: 0.0065,
+    });
+    this.metal = new MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.38 });
     this.skin = makeOperative(group, index, team, true, this.cloth, this.fabric, this.metal);
     const lowerDetail = makeOperative(null, index, team, false, this.cloth, this.fabric, this.metal);
     this.uniforms = [this.skin.uniform, lowerDetail.uniform];
@@ -374,9 +432,9 @@ export class BotRig {
     this.temp.set(bot.velocity.x * .024, 0, bot.velocity.z * .024);
     this.travelLean.lerp(this.temp, 1 - Math.exp(-dt * 10));
 
-    const height = .928 - .278 * crouch - .055 * drive + this.bodyBob;
+    const height = .928 - .315 * crouch - .055 * drive + this.bodyBob;
     const pelvis = joints[PELVIS];
-    this.place(pelvis, bot, this.pelvisShift, height, .015 - crouch * .047);
+    this.place(pelvis, bot, this.pelvisShift, height, .015 - crouch * .082);
     let reachHeight = height;
     for (let i = 0; i < 2; i++) {
       const foot = this.feet[i].position;
@@ -389,11 +447,11 @@ export class BotRig {
     if (!this.ready) this.pelvisHeight = reachHeight;
     else this.pelvisHeight += (reachHeight - this.pelvisHeight) * (1 - Math.exp(-dt * 21));
     pelvis.y = bot.position.y + Math.min(this.pelvisHeight, reachHeight + .012);
-    const settle = pelvis.y - bot.position.y - (.928 - .278 * crouch);
+    const settle = pelvis.y - bot.position.y - (.928 - .315 * crouch);
     const breathing = Math.sin(bot.clock * 3.3) * (.0065 - drive * .0035);
-    const lean = crouch * .085;
-    this.place(joints[NECK], bot, -this.pelvisShift * .6, 1.485 - .526 * crouch + settle * .83 + breathing, lean);
-    this.place(joints[HEAD], bot, -this.pelvisShift * .34, 1.644 - .58 * crouch + settle * .69 + breathing * .54, lean + .03);
+    const lean = crouch * .138 + drive * .018;
+    this.place(joints[NECK], bot, -this.pelvisShift * .64, 1.485 - .525 * crouch + settle * .83 + breathing, lean);
+    this.place(joints[HEAD], bot, -this.pelvisShift * .36 + this.readyWeapon * .014, 1.644 - .552 * crouch + settle * .69 + breathing * .54, lean + .035);
     joints[NECK].add(this.travelLean);
     joints[HEAD].addScaledVector(this.travelLean, .94);
 
@@ -402,11 +460,11 @@ export class BotRig {
       const hip = joints[index ? RIGHT_HIP : LEFT_HIP];
       const knee = joints[index ? RIGHT_KNEE : LEFT_KNEE];
       const foot = joints[index ? RIGHT_FOOT : LEFT_FOOT];
-      hip.copy(pelvis).addScaledVector(this.side, side * .105);
+      hip.copy(pelvis).addScaledVector(this.side, side * .108);
       foot.copy(this.feet[index].position);
       const footTurn = MathUtils.clamp(angleDelta(this.feet[index].yaw, this.bodyYaw), -.78, .78);
-      const kneeYaw = this.bodyYaw + footTurn * .58 - side * crouch * .13;
-      this.temp.set(-Math.sin(kneeYaw), 0, -Math.cos(kneeYaw));
+      const kneeYaw = this.bodyYaw + footTurn * .58 - side * (.06 + crouch * .24);
+      this.temp.set(-Math.sin(kneeYaw), crouch * .14, -Math.cos(kneeYaw));
       this.midJoint(knee, hip, foot, this.temp, .455, .432);
     }
 
@@ -414,24 +472,41 @@ export class BotRig {
     else if (this.reloadPose < .01) this.reloadDuration = 0;
     const reloadTarget = MathUtils.clamp(bot.reloading / .24 || 0, 0, 1);
     this.reloadPose += (reloadTarget - this.reloadPose) * (1 - Math.exp(-dt * 14));
-    this.aim.setFromAxisAngle(UP, bot.yaw + this.pelvisShift * .54);
-    const riflePitch = bot.pitch + bot.kick * .064 - (1 - this.readyWeapon) * .17 - this.reloadPose * .15;
+    const patrolSway = (1 - this.readyWeapon) * drive * Math.sin(bot.clock * 5.2 + (bot.phase || 0));
+    this.aim.setFromAxisAngle(UP, bot.yaw + this.pelvisShift * .54 + patrolSway * .045);
+    const riflePitch = bot.pitch + bot.kick * .068 - (1 - this.readyWeapon) * .19 - this.reloadPose * .17;
     this.pitch.setFromAxisAngle(this.temp.set(1, 0, 0), riflePitch);
     this.aim.multiply(this.pitch);
+    if (this.reloadPose > .001) {
+      this.pitch.setFromAxisAngle(this.temp.set(0, 0, 1), -this.reloadPose * .36);
+      this.aim.multiply(this.pitch);
+    }
     const wantedScan = bot.visibleTarget ? 0 : Math.sin(bot.clock * 2.4 + (bot.phase || 0)) * (.10 + drive * .03);
     this.headScan += (wantedScan - this.headScan) * (1 - Math.exp(-dt * 10));
     this.headAim.setFromAxisAngle(UP, bot.yaw + this.headScan);
-    this.pitch.setFromAxisAngle(this.temp.set(1, 0, 0), MathUtils.clamp(bot.pitch * .69, -.28, .34) + breathing);
+    this.pitch.setFromAxisAngle(this.temp.set(1, 0, 0), MathUtils.clamp(bot.pitch * .72 + crouch * .06, -.28, .36) + breathing);
     this.headAim.multiply(this.pitch);
+    if (this.readyWeapon > .35) {
+      this.pitch.setFromAxisAngle(this.temp.set(0, 0, 1), -(this.readyWeapon - .35) * .085);
+      this.headAim.multiply(this.pitch);
+    }
 
-    const gunHeight = 1.222 + .122 * this.readyWeapon - .515 * crouch + settle * .79 + breathing - this.reloadPose * .102;
-    this.place(joints[RIGHT_HAND], bot, .153 - this.pelvisShift, gunHeight, .175 + lean * .53 - bot.kick * .03);
+    const gunHeight = 1.236 + .126 * this.readyWeapon - .498 * crouch + settle * .79 + breathing - this.reloadPose * .104;
+    this.place(
+      joints[RIGHT_HAND],
+      bot,
+      .142 - this.pelvisShift + patrolSway * .022,
+      gunHeight,
+      .208 + lean * .58 - bot.kick * .032 - (1 - this.readyWeapon) * .024,
+    );
     joints[RIGHT_HAND].addScaledVector(this.travelLean, .53);
-    const reloadTravel = this.reloadDuration > 0 ? Math.sin(Math.PI * MathUtils.clamp(bot.reloading / this.reloadDuration || 0, 0, 1)) : 0;
+    const reloadPhase = this.reloadDuration > 0 ? MathUtils.clamp(1 - (bot.reloading / this.reloadDuration || 0), 0, 1) : 0;
+    const reloadTravel = Math.sin(Math.PI * reloadPhase);
+    const magPouchDip = Math.sin(Math.PI * MathUtils.clamp(reloadPhase * 1.6, 0, 1));
     this.temp.set(
-      MathUtils.lerp(-.058, -.031, this.reloadPose),
-      MathUtils.lerp(.018, -.094 - reloadTravel * .048, this.reloadPose),
-      MathUtils.lerp(-.275, -.101, this.reloadPose),
+      MathUtils.lerp(-.034, -.026 - magPouchDip * .035, this.reloadPose),
+      MathUtils.lerp(.012, -.096 - reloadTravel * .058, this.reloadPose),
+      MathUtils.lerp(-.278, -.092 + magPouchDip * .045, this.reloadPose),
     ).applyQuaternion(this.aim);
     joints[LEFT_HAND].copy(joints[RIGHT_HAND]).add(this.temp);
 
@@ -440,10 +515,12 @@ export class BotRig {
       const shoulder = joints[index ? RIGHT_SHOULDER : LEFT_SHOULDER];
       const elbow = joints[index ? RIGHT_ELBOW : LEFT_ELBOW];
       const hand = joints[index ? RIGHT_HAND : LEFT_HAND];
-      shoulder.copy(joints[NECK]).addScaledVector(this.side, side * .167)
-        .addScaledVector(this.front, side * -.035 * this.readyWeapon);
-      shoulder.y -= .102;
-      this.temp.copy(this.side).multiplyScalar(side * .42).addScaledVector(DOWN, .85);
+      shoulder.copy(joints[NECK]).addScaledVector(this.side, side * .168)
+        .addScaledVector(this.front, side * (-.045 * this.readyWeapon + this.pelvisShift * .22));
+      shoulder.y -= .098 + (index ? .008 * this.readyWeapon : 0);
+      this.temp.copy(this.side).multiplyScalar(side * (index ? .31 : .26))
+        .addScaledVector(this.front, index ? -.14 : .08)
+        .addScaledVector(DOWN, index ? .88 : .92);
       this.midJoint(elbow, shoulder, hand, this.temp, .281, .258);
     }
     this.ready = true;
@@ -474,7 +551,7 @@ export class BotRig {
     if (fallen) this.front.copy(this.bodyBack).negate();
     skin.torso.position.copy(joints[PELVIS]);
     skin.torso.quaternion.copy(this.bodyRotation);
-    skin.torso.scale.y = MathUtils.clamp(joints[PELVIS].distanceTo(joints[NECK]) / 0.55, 0.75, 1.1);
+    skin.torso.scale.y = MathUtils.clamp(joints[PELVIS].distanceTo(joints[NECK]) / 0.545, 0.80, 1.08);
     skin.head.position.copy(joints[HEAD]);
     skin.head.quaternion.copy(fallen ? this.bodyRotation : this.headAim);
     this.uniforms[Number(this.distant)].deform(joints, this.side, this.front, skin.uniform.mesh);
@@ -511,7 +588,7 @@ export class BotRig {
     const impulse = this.temp.copy(direction).multiplyScalar(2.7).addScaledVector(velocity, 0.65);
     impulse.y += 0.65;
     this.dropPoint.copy(this.skin.rifle.position);
-    this.dropVelocity.copy(impulse).multiplyScalar(.61).addScaledVector(this.front, .45);
+    this.dropVelocity.copy(impulse).multiplyScalar(.61).addScaledVector(this.front, .68);
     this.dropRotation.copy(this.skin.rifle.quaternion);
     const yaw = Math.atan2(-this.front.x, -this.front.z) + .55;
     this.footRotation.set(0, yaw, Math.PI * .48, 'YXZ');
