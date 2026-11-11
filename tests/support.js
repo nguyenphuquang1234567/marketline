@@ -11,7 +11,7 @@ export function monitor(page, baseURL) {
   });
   page.on('request', request => {
     const url = request.url();
-    requests.push(url);
+    if (!url.startsWith('blob:')) requests.push(url);
     if (url.startsWith('http') && new URL(url).origin !== baseURL) errors.push(`Unexpected network request ${url}`);
   });
   page.on('requestfailed', request => {

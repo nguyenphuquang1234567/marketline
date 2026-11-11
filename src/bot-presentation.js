@@ -35,6 +35,7 @@ export class BotPresentation {
       if (reset) copyTransform(part.previous, part.mesh);
     }
 
+    if (!this.clothing) return;
     const geometry = this.clothing.geometry;
     const changedDetail = this.currentGeometry !== geometry;
     this.currentGeometry = geometry;
@@ -49,14 +50,14 @@ export class BotPresentation {
   }
 
   apply(alpha) {
-    if (!this.currentGeometry || this.currentGeometry !== this.clothing.geometry || alpha >= .999) return;
+    if (alpha >= .999 || (this.clothing && this.currentGeometry !== this.clothing.geometry)) return;
     this.active = true;
     for (const { mesh, previous, current } of this.parts) {
       mesh.position.lerpVectors(previous.position, current.position, alpha);
       mesh.quaternion.slerpQuaternions(previous.rotation, current.rotation, alpha);
       mesh.scale.lerpVectors(previous.scale, current.scale, alpha);
     }
-    for (const { attribute, previous, current } of this.samples.get(this.currentGeometry)) {
+    for (const { attribute, previous, current } of this.samples.get(this.currentGeometry) ?? []) {
       const output = attribute.array;
       for (let i = 0; i < output.length; i++) output[i] = previous[i] + (current[i] - previous[i]) * alpha;
       attribute.needsUpdate = true;
@@ -71,7 +72,7 @@ export class BotPresentation {
       mesh.quaternion.copy(current.rotation);
       mesh.scale.copy(current.scale);
     }
-    for (const { attribute, current } of this.samples.get(this.currentGeometry)) {
+    for (const { attribute, current } of this.samples.get(this.currentGeometry) ?? []) {
       attribute.array.set(current);
       attribute.needsUpdate = true;
     }

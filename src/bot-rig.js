@@ -9,6 +9,7 @@ import { buildHead } from './operative-head.js';
 import { OperativeUniform } from './operative-uniform.js';
 import { angleDelta, BotGait } from './bot-gait.js';
 import { BotPresentation } from './bot-presentation.js';
+import { SoldierAnimator } from './soldier-animator.js';
 
 const UP = new Vector3(0, 1, 0);
 const DOWN = new Vector3(0, -1, 0);
@@ -133,7 +134,13 @@ function parts(detail) {
   };
 }
 
-function makeRifle(group, detail, metal) {
+function magazineParts(gun) {
+  gun.box(0.046, 0.092, 0.066, 0, -0.068, -0.096, '#363931', 0.005);
+  gun.box(0.046, 0.072, 0.064, 0, -0.132, -0.108, '#2e312a', 0.005);
+  gun.box(0.050, 0.016, 0.070, 0, -0.168, -0.112, '#1c201f', 0.003);
+}
+
+function makeRifle(group, detail, metal, loaded = true) {
   const gun = parts(detail);
   // Upper and lower receiver with flared magwell, trigger guard, and brass deflector.
   gun.box(0.062, 0.056, 0.215, 0, 0.048, -0.038, '#2b302f', 0.006);
@@ -158,9 +165,7 @@ function makeRifle(group, detail, metal) {
   // Pistol grip and curved 30-round STANAG/polymer magazine with Magpul floorplate.
   gun.box(0.042, 0.088, 0.054, 0, -0.048, 0.044, '#232521', 0.006);
   gun.box(0.044, 0.016, 0.058, 0, -0.090, 0.048, '#181a18', 0.003);
-  gun.box(0.046, 0.092, 0.066, 0, -0.068, -0.096, '#363931', 0.005);
-  gun.box(0.046, 0.072, 0.064, 0, -0.132, -0.108, '#2e312a', 0.005);
-  gun.box(0.050, 0.016, 0.070, 0, -0.168, -0.112, '#1c1e1b', 0.003);
+  if (loaded) magazineParts(gun);
 
   // Buffer tube and SOPMOD collapsible buttstock with cheek rest and rubber pad.
   gun.cylinder(0.018, 0.018, 0.165, 0, 0.038, 0.145, '#252928', true);
@@ -322,26 +327,37 @@ function wovenFabric() {
 }
 
 export class BotRig {
-  constructor(group, index, team) {
+  constructor(group, index, team, soldier) {
     this.group = group;
-    this.fabric = wovenFabric();
-    this.cloth = new MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.84,
-      map: this.fabric.map,
-      bumpMap: this.fabric.map,
-      bumpScale: 0.0065,
-    });
     this.metal = new MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.38 });
-    this.skin = makeOperative(group, index, team, true, this.cloth, this.fabric, this.metal);
-    const lowerDetail = makeOperative(null, index, team, false, this.cloth, this.fabric, this.metal);
-    this.uniforms = [this.skin.uniform, lowerDetail.uniform];
-    const skinnedMeshes = skin => [skin.torso, skin.head, skin.rifle, skin.uniform.mesh, ...skin.limbs.flatMap(Object.values)];
-    const lowMeshes = skinnedMeshes(lowerDetail);
-    this.geometry = skinnedMeshes(this.skin).map((mesh, part) => ({
-      mesh, near: mesh.geometry, far: lowMeshes[part].geometry,
-    }));
-    this.presentation = new BotPresentation(this.geometry, this.skin.uniform.mesh);
+    this.soldier = soldier ? new SoldierAnimator(soldier, group) : null;
+    this.shoeRotations = [new Quaternion(), new Quaternion()];
+    if (this.soldier) {
+      const rifle = makeRifle(group, true, this.metal, false);
+      const magazine = parts(false);
+      magazineParts(magazine);
+      this.skin = { rifle, magazine: magazine.mesh(group, this.metal) };
+      this.geometry = [{ mesh: rifle, near: rifle.geometry, far: makeRifle(null, false, this.metal, false).geometry }];
+      this.presentation = new BotPresentation([...this.geometry, { mesh: this.skin.magazine }, ...this.soldier.parts]);
+    } else {
+      this.fabric = wovenFabric();
+      this.cloth = new MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.84,
+        map: this.fabric.map,
+        bumpMap: this.fabric.map,
+        bumpScale: 0.0065,
+      });
+      this.skin = makeOperative(group, index, team, true, this.cloth, this.fabric, this.metal);
+      const lowerDetail = makeOperative(null, index, team, false, this.cloth, this.fabric, this.metal);
+      this.uniforms = [this.skin.uniform, lowerDetail.uniform];
+      const skinnedMeshes = skin => [skin.torso, skin.head, skin.rifle, skin.uniform.mesh, ...skin.limbs.flatMap(Object.values)];
+      const lowMeshes = skinnedMeshes(lowerDetail);
+      this.geometry = skinnedMeshes(this.skin).map((mesh, part) => ({
+        mesh, near: mesh.geometry, far: lowMeshes[part].geometry,
+      }));
+      this.presentation = new BotPresentation(this.geometry, this.skin.uniform.mesh);
+    }
     this.distant = false;
     this.joints = Array.from({ length: 15 }, () => new Vector3());
     this.previous = this.joints.map(() => new Vector3());
@@ -350,12 +366,17 @@ export class BotRig {
     this.gait = new BotGait(index);
     this.feet = this.gait.feet;
     this.ready = false;
-    this.bodyYaw = this.crouchPose = this.headScan = this.reloadPose = 0;
+    this.bodyYaw = this.chestYaw = this.lookYaw = this.stepYaw = 0;
+    this.crouchPose = this.headScan = this.reloadPose = this.carry = 0;
     this.reloadDuration = 0;
     this.pelvisHeight = .928;
     this.pelvisShift = 0;
     this.bodyBob = 0;
     this.travelLean = new Vector3();
+    this.previousVelocity = new Vector3();
+    this.acceleration = new Vector3();
+    this.chestSide = new Vector3();
+    this.chestFront = new Vector3();
     this.front = new Vector3();
     this.side = new Vector3();
     this.temp = new Vector3();
@@ -401,59 +422,109 @@ export class BotRig {
     return out.copy(origin).addScaledVector(axis, offset).addScaledVector(bend, Math.sqrt(upper * upper - offset * offset));
   }
 
+  updatePosture(bot, physics, dt, speed, drive, crouchTarget, aimReady, reset) {
+    const approach = (rate) => 1 - Math.exp(-dt * rate);
+    const targetTravel = speed > .21 ? Math.atan2(-bot.velocity.x, -bot.velocity.z) : bot.yaw;
+    const travelInfluence = MathUtils.smoothstep(speed, .35, 2.45) * (1 - aimReady * .49);
+    const plannedYaw = bot.yaw + MathUtils.clamp(angleDelta(targetTravel, bot.yaw), -.72, .72) * travelInfluence;
+    if (reset) {
+      this.bodyYaw = this.chestYaw = this.lookYaw = bot.yaw;
+      this.stepYaw = plannedYaw;
+      this.crouchPose = crouchTarget;
+      this.readyWeapon = aimReady;
+      this.reloadPose = this.reloadDuration = this.carry = 0;
+      this.pelvisShift = this.bodyBob = this.headScan = 0;
+      this.previousVelocity.copy(bot.velocity);
+      this.acceleration.set(0, 0, 0);
+      this.travelLean.set(bot.velocity.x * .026, 0, bot.velocity.z * .026);
+      this.gait.reset(bot, physics, this.stepYaw, this.readyWeapon, this.crouchPose);
+    } else {
+      this.lookYaw += angleDelta(bot.yaw, this.lookYaw) * approach(26);
+      this.stepYaw += angleDelta(plannedYaw, this.stepYaw) * approach(16);
+      this.crouchPose += (crouchTarget - this.crouchPose) * approach(13);
+      this.readyWeapon += (aimReady - this.readyWeapon) * approach(10);
+    }
+    const crouch = this.crouchPose;
+    this.gait.update(dt, bot, physics, this.stepYaw, this.readyWeapon, crouch, speed);
+    this.pelvisShift += (this.gait.shift - this.pelvisShift) * approach(16);
+    this.bodyBob += (this.gait.lift - this.bodyBob) * approach(22);
+
+    const leftYaw = this.feet[0].yaw - .095;
+    const stanceYaw = leftYaw + .5 * angleDelta(this.feet[1].yaw + .095, leftYaw);
+    const stanceLag = MathUtils.clamp(angleDelta(this.stepYaw, stanceYaw), -.76, .76) * (.67 - drive * .38);
+    const hipTarget = this.stepYaw - stanceLag + this.pelvisShift * 2.55;
+    this.bodyYaw += angleDelta(hipTarget, this.bodyYaw) * approach(9.5 + drive * 3);
+    const chestTarget = this.bodyYaw + angleDelta(this.lookYaw, this.bodyYaw) * (.56 + this.readyWeapon * .36)
+      - this.pelvisShift * (2.8 - this.readyWeapon * 1.1);
+    this.chestYaw += angleDelta(chestTarget, this.chestYaw) * approach(13);
+    this.side.set(Math.cos(this.bodyYaw), 0, -Math.sin(this.bodyYaw));
+    this.front.set(-Math.sin(this.bodyYaw), 0, -Math.cos(this.bodyYaw));
+    this.chestSide.set(Math.cos(this.chestYaw), 0, -Math.sin(this.chestYaw));
+    this.chestFront.set(-Math.sin(this.chestYaw), 0, -Math.cos(this.chestYaw));
+
+    this.temp.subVectors(bot.velocity, this.previousVelocity).setY(0).multiplyScalar(1 / Math.max(dt, .001)).clampLength(0, 22);
+    this.acceleration.lerp(this.temp, approach(13));
+    this.previousVelocity.copy(bot.velocity);
+    this.temp.set(bot.velocity.x * .032, 0, bot.velocity.z * .032)
+      .addScaledVector(this.acceleration, .0046).clampLength(0, .205);
+    this.travelLean.lerp(this.temp, approach(11));
+    const carry = (1 - aimReady) * MathUtils.smoothstep(speed, 1.2, 3.75) * (1 - crouch * .45);
+    this.carry += (carry - this.carry) * approach(8);
+  }
+
   pose(bot, physics, dt) {
     this.group.visible = true;
     const reset = !this.ready;
+    if (this.soldier) {
+      const contact = this.soldier.pose(bot, physics, dt, reset);
+      this.soldier.syncWeapon(this.skin.rifle, this.skin.magazine);
+      this.front.set(-Math.sin(bot.yaw), 0, -Math.cos(bot.yaw));
+      this.ready = true;
+      this.presentation.save(reset);
+      return contact;
+    }
     const joints = this.joints;
     const speed = Math.hypot(bot.velocity.x, bot.velocity.z);
     const drive = MathUtils.clamp(speed / 4.6, 0, 1);
     const crouchTarget = MathUtils.clamp((1.77 - bot.height) / .61, 0, 1);
     const aimReady = bot.visibleTarget || bot.state === 'engage' ? 1 : bot.state === 'cover' ? .66 : .28;
-    if (!this.ready) {
-      this.bodyYaw = bot.yaw;
-      this.crouchPose = crouchTarget;
-      this.readyWeapon = aimReady;
-      this.reloadPose = 0;
-      this.reloadDuration = 0;
-      this.pelvisShift = this.bodyBob = this.headScan = 0;
-      this.travelLean.set(bot.velocity.x * .023, 0, bot.velocity.z * .023);
-      this.gait.reset(bot, physics, this.bodyYaw, this.readyWeapon, this.crouchPose);
-    } else {
-      this.bodyYaw += angleDelta(bot.yaw, this.bodyYaw) * (1 - Math.exp(-dt * (drive > .4 ? 15 : 11)));
-      this.crouchPose += (crouchTarget - this.crouchPose) * (1 - Math.exp(-dt * 16));
-      this.readyWeapon += (aimReady - this.readyWeapon) * (1 - Math.exp(-dt * 11));
-    }
+    this.updatePosture(bot, physics, dt, speed, drive, crouchTarget, aimReady, reset);
     const crouch = this.crouchPose;
-    this.gait.update(dt, bot, physics, this.bodyYaw, this.readyWeapon, crouch, speed);
-    this.pelvisShift += (this.gait.shift - this.pelvisShift) * (1 - Math.exp(-dt * 19));
-    this.bodyBob += (this.gait.lift - this.bodyBob) * (1 - Math.exp(-dt * 23));
-    this.side.set(Math.cos(this.bodyYaw), 0, -Math.sin(this.bodyYaw));
-    this.front.set(-Math.sin(this.bodyYaw), 0, -Math.cos(this.bodyYaw));
-    this.temp.set(bot.velocity.x * .024, 0, bot.velocity.z * .024);
-    this.travelLean.lerp(this.temp, 1 - Math.exp(-dt * 10));
-
     const height = .928 - .315 * crouch - .055 * drive + this.bodyBob;
     const pelvis = joints[PELVIS];
     this.place(pelvis, bot, this.pelvisShift, height, .015 - crouch * .082);
-    let reachHeight = height;
+    let reachHeight = height, anticipatedHeight = height;
     for (let i = 0; i < 2; i++) {
-      const foot = this.feet[i].position;
-      const side = i ? .105 : -.105;
+      const state = this.feet[i];
+      const foot = state.position;
+      const side = i ? .108 : -.108;
       const dx = pelvis.x + side * this.side.x - foot.x;
       const dz = pelvis.z + side * this.side.z - foot.z;
       const rise = Math.sqrt(Math.max(.10, .874 ** 2 - dx * dx - dz * dz));
       reachHeight = Math.min(reachHeight, foot.y - bot.position.y + rise);
+      if (!state.swinging) {
+        const forwardX = dx + bot.velocity.x * .046;
+        const forwardZ = dz + bot.velocity.z * .046;
+        const forecast = Math.sqrt(Math.max(.10, .874 ** 2 - forwardX ** 2 - forwardZ ** 2));
+        anticipatedHeight = Math.min(anticipatedHeight, foot.y - bot.position.y + forecast + .018);
+      }
     }
-    if (!this.ready) this.pelvisHeight = reachHeight;
-    else this.pelvisHeight += (reachHeight - this.pelvisHeight) * (1 - Math.exp(-dt * 21));
-    pelvis.y = bot.position.y + Math.min(this.pelvisHeight, reachHeight + .012);
-    const settle = pelvis.y - bot.position.y - (.928 - .315 * crouch);
+    const targetHeight = Math.min(reachHeight, anticipatedHeight);
+    if (reset) this.pelvisHeight = targetHeight;
+    else this.pelvisHeight += (targetHeight - this.pelvisHeight) * (1 - Math.exp(-dt * (targetHeight < this.pelvisHeight ? 25 : 16)));
+    pelvis.y = bot.position.y + Math.min(this.pelvisHeight, reachHeight + .010);
+
     const breathing = Math.sin(bot.clock * 3.3) * (.0065 - drive * .0035);
-    const lean = crouch * .138 + drive * .018;
-    this.place(joints[NECK], bot, -this.pelvisShift * .64, 1.485 - .525 * crouch + settle * .83 + breathing, lean);
-    this.place(joints[HEAD], bot, -this.pelvisShift * .36 + this.readyWeapon * .014, 1.644 - .552 * crouch + settle * .69 + breathing * .54, lean + .035);
-    joints[NECK].add(this.travelLean);
-    joints[HEAD].addScaledVector(this.travelLean, .94);
+    const neck = joints[NECK];
+    neck.copy(pelvis).addScaledVector(UP, .557 - .177 * crouch + breathing)
+      .addScaledVector(this.chestFront, .008 + crouch * .252)
+      .addScaledVector(this.chestSide, -this.pelvisShift * 1.44).add(this.travelLean);
+    this.bodyUp.subVectors(neck, pelvis).normalize();
+    this.bodyBack.crossVectors(this.chestSide, this.bodyUp).normalize();
+    this.chestSide.crossVectors(this.bodyUp, this.bodyBack).normalize();
+    this.chestFront.copy(this.bodyBack).negate();
+    joints[HEAD].copy(neck).addScaledVector(this.bodyUp, .064).addScaledVector(UP, .088)
+      .addScaledVector(this.chestFront, .028).addScaledVector(this.chestSide, this.readyWeapon * .014);
 
     for (let index = 0; index < 2; index++) {
       const side = index ? 1 : -1;
@@ -472,34 +543,28 @@ export class BotRig {
     else if (this.reloadPose < .01) this.reloadDuration = 0;
     const reloadTarget = MathUtils.clamp(bot.reloading / .24 || 0, 0, 1);
     this.reloadPose += (reloadTarget - this.reloadPose) * (1 - Math.exp(-dt * 14));
-    const patrolSway = (1 - this.readyWeapon) * drive * Math.sin(bot.clock * 5.2 + (bot.phase || 0));
-    this.aim.setFromAxisAngle(UP, bot.yaw + this.pelvisShift * .54 + patrolSway * .045);
-    const riflePitch = bot.pitch + bot.kick * .068 - (1 - this.readyWeapon) * .19 - this.reloadPose * .17;
+    const lookToAim = angleDelta(bot.yaw, this.chestYaw);
+    const rifleYaw = this.chestYaw + lookToAim * this.readyWeapon + this.carry * .23 - this.pelvisShift * .65;
+    this.aim.setFromAxisAngle(UP, rifleYaw);
+    const riflePitch = bot.pitch + bot.kick * .068 - (1 - this.readyWeapon) * .17 - this.carry * .47 - this.reloadPose * .17;
     this.pitch.setFromAxisAngle(this.temp.set(1, 0, 0), riflePitch);
     this.aim.multiply(this.pitch);
-    if (this.reloadPose > .001) {
-      this.pitch.setFromAxisAngle(this.temp.set(0, 0, 1), -this.reloadPose * .36);
-      this.aim.multiply(this.pitch);
-    }
+    this.pitch.setFromAxisAngle(this.temp.set(0, 0, 1), -this.reloadPose * .36 - this.carry * .26);
+    this.aim.multiply(this.pitch);
+
     const wantedScan = bot.visibleTarget ? 0 : Math.sin(bot.clock * 2.4 + (bot.phase || 0)) * (.10 + drive * .03);
     this.headScan += (wantedScan - this.headScan) * (1 - Math.exp(-dt * 10));
-    this.headAim.setFromAxisAngle(UP, bot.yaw + this.headScan);
+    const faceYaw = this.chestYaw + MathUtils.clamp(angleDelta(this.lookYaw + this.headScan, this.chestYaw), -.87, .87);
+    this.headAim.setFromAxisAngle(UP, faceYaw);
     this.pitch.setFromAxisAngle(this.temp.set(1, 0, 0), MathUtils.clamp(bot.pitch * .72 + crouch * .06, -.28, .36) + breathing);
     this.headAim.multiply(this.pitch);
-    if (this.readyWeapon > .35) {
-      this.pitch.setFromAxisAngle(this.temp.set(0, 0, 1), -(this.readyWeapon - .35) * .085);
-      this.headAim.multiply(this.pitch);
-    }
+    this.pitch.setFromAxisAngle(this.temp.set(0, 0, 1), -(this.readyWeapon - .35) * .07 + this.pelvisShift * .48);
+    this.headAim.multiply(this.pitch);
 
-    const gunHeight = 1.236 + .126 * this.readyWeapon - .498 * crouch + settle * .79 + breathing - this.reloadPose * .104;
-    this.place(
-      joints[RIGHT_HAND],
-      bot,
-      .142 - this.pelvisShift + patrolSway * .022,
-      gunHeight,
-      .208 + lean * .58 - bot.kick * .032 - (1 - this.readyWeapon) * .024,
-    );
-    joints[RIGHT_HAND].addScaledVector(this.travelLean, .53);
+    joints[RIGHT_HAND].copy(neck)
+      .addScaledVector(this.chestSide, .142 - this.carry * .034)
+      .addScaledVector(this.bodyUp, -.25 + this.readyWeapon * .122 - this.reloadPose * .103 - this.carry * .062)
+      .addScaledVector(this.chestFront, .205 - bot.kick * .032 - this.carry * .032);
     const reloadPhase = this.reloadDuration > 0 ? MathUtils.clamp(1 - (bot.reloading / this.reloadDuration || 0), 0, 1) : 0;
     const reloadTravel = Math.sin(Math.PI * reloadPhase);
     const magPouchDip = Math.sin(Math.PI * MathUtils.clamp(reloadPhase * 1.6, 0, 1));
@@ -515,12 +580,12 @@ export class BotRig {
       const shoulder = joints[index ? RIGHT_SHOULDER : LEFT_SHOULDER];
       const elbow = joints[index ? RIGHT_ELBOW : LEFT_ELBOW];
       const hand = joints[index ? RIGHT_HAND : LEFT_HAND];
-      shoulder.copy(joints[NECK]).addScaledVector(this.side, side * .168)
-        .addScaledVector(this.front, side * (-.045 * this.readyWeapon + this.pelvisShift * .22));
-      shoulder.y -= .098 + (index ? .008 * this.readyWeapon : 0);
-      this.temp.copy(this.side).multiplyScalar(side * (index ? .31 : .26))
-        .addScaledVector(this.front, index ? -.14 : .08)
-        .addScaledVector(DOWN, index ? .88 : .92);
+      shoulder.copy(neck).addScaledVector(this.chestSide, side * .168)
+        .addScaledVector(this.chestFront, side * (-.045 * this.readyWeapon + this.pelvisShift * .22))
+        .addScaledVector(this.bodyUp, -.098 - (index ? .008 * this.readyWeapon : 0));
+      this.temp.copy(this.chestSide).multiplyScalar(side * (index ? .31 : .26))
+        .addScaledVector(this.chestFront, index ? -.14 - this.carry * .17 : .08)
+        .addScaledVector(this.bodyUp, index ? -.88 : -.92);
       this.midJoint(elbow, shoulder, hand, this.temp, .281, .258);
     }
     this.ready = true;
@@ -544,29 +609,35 @@ export class BotRig {
     const skin = this.skin;
     if (fallen) this.side.subVectors(joints[RIGHT_SHOULDER], joints[LEFT_SHOULDER]).normalize();
     this.bodyUp.subVectors(joints[NECK], joints[PELVIS]).normalize();
-    this.bodyBack.crossVectors(this.side, this.bodyUp).normalize();
+    this.bodyBack.crossVectors(fallen ? this.side : this.chestSide, this.bodyUp).normalize();
     this.bodySide.crossVectors(this.bodyUp, this.bodyBack).normalize();
     this.basis.makeBasis(this.bodySide, this.bodyUp, this.bodyBack);
     this.bodyRotation.setFromRotationMatrix(this.basis);
     if (fallen) this.front.copy(this.bodyBack).negate();
+    const head = fallen ? this.bodyRotation : this.headAim;
+    skin.rifle.position.copy(fallen ? this.dropPoint : joints[RIGHT_HAND]);
+    skin.rifle.quaternion.copy(fallen ? this.dropRotation : this.aim);
+    for (let index = 0; index < 2; index++) {
+      const knee = joints[index ? RIGHT_KNEE : LEFT_KNEE];
+      const foot = joints[index ? RIGHT_FOOT : LEFT_FOOT];
+      const rotation = this.shoeRotations[index];
+      if (fallen) {
+        this.orient(rotation, knee, foot, this.front);
+      } else {
+        const { roll, yaw } = this.feet[index];
+        rotation.setFromEuler(this.footRotation.set(roll, yaw, 0, 'YXZ'));
+      }
+    }
     skin.torso.position.copy(joints[PELVIS]);
     skin.torso.quaternion.copy(this.bodyRotation);
     skin.torso.scale.y = MathUtils.clamp(joints[PELVIS].distanceTo(joints[NECK]) / 0.545, 0.80, 1.08);
     skin.head.position.copy(joints[HEAD]);
-    skin.head.quaternion.copy(fallen ? this.bodyRotation : this.headAim);
+    skin.head.quaternion.copy(head);
     this.uniforms[Number(this.distant)].deform(joints, this.side, this.front, skin.uniform.mesh);
     for (let index = 0; index < 2; index += 1) {
       const limb = skin.limbs[index];
-      const knee = joints[index ? RIGHT_KNEE : LEFT_KNEE];
-      const foot = joints[index ? RIGHT_FOOT : LEFT_FOOT];
-      limb.shoe.position.copy(foot);
-      if (fallen) {
-        this.orient(limb.shoe.quaternion, knee, foot, this.front);
-      } else {
-        const { roll, yaw } = this.feet[index];
-        this.footRotation.set(roll, yaw, 0, 'YXZ');
-        limb.shoe.quaternion.setFromEuler(this.footRotation);
-      }
+      limb.shoe.position.copy(joints[index ? RIGHT_FOOT : LEFT_FOOT]);
+      limb.shoe.quaternion.copy(this.shoeRotations[index]);
 
       const elbow = joints[index ? RIGHT_ELBOW : LEFT_ELBOW];
       const hand = joints[index ? RIGHT_HAND : LEFT_HAND];
@@ -574,8 +645,6 @@ export class BotRig {
       if (fallen) this.orient(limb.glove.quaternion, elbow, hand, this.front);
       else limb.glove.quaternion.copy(this.aim);
     }
-    skin.rifle.position.copy(fallen ? this.dropPoint : joints[RIGHT_HAND]);
-    skin.rifle.quaternion.copy(fallen ? this.dropRotation : this.aim);
   }
 
   muzzle(out) {
@@ -594,6 +663,11 @@ export class BotRig {
     this.footRotation.set(0, yaw, Math.PI * .48, 'YXZ');
     this.restRotation.setFromEuler(this.footRotation);
     this.rifleSettled = false;
+    if (this.soldier) {
+      this.soldier.fall(direction);
+      this.magazineDroppedWithRifle = this.soldier.reloadPhase < .25 || this.soldier.reloadPhase > .78;
+      return;
+    }
     for (let index = 0; index < this.joints.length; index += 1) {
       this.previous[index].copy(this.joints[index]).addScaledVector(impulse, -1 / 120);
     }
@@ -626,7 +700,10 @@ export class BotRig {
   }
 
   tumbleRifle(physics, dt) {
-    this.dropRotation.slerp(this.restRotation, 1 - Math.exp(-dt * (this.rifleSettled ? 19 : 6.8)));
+    // Let a released rifle clear the hands before the stock turns toward the floor.
+    if (!this.soldier || this.age > .075) {
+      this.dropRotation.slerp(this.restRotation, 1 - Math.exp(-dt * (this.rifleSettled ? 19 : 6.8)));
+    }
     if (this.rifleSettled) return;
     this.dropVelocity.y -= dt * 11;
     this.dropTravel.copy(this.dropVelocity).multiplyScalar(dt);
@@ -659,6 +736,29 @@ export class BotRig {
       return;
     }
     if (this.age > 2.3) return;
+    if (this.soldier) {
+      const release = !this.soldier.fallClip;
+      this.soldier.tumble(physics, this.age, dt);
+      if (release) {
+        // Let the rifle land ahead of the legs. A wall turns the drop along
+        // its face so the weapon does not rebound into the seated body.
+        const yaw = this.soldier.fallYaw + this.soldier.coverTurn;
+        const forward = this.temp.set(0, 0, -1).applyAxisAngle(UP, yaw);
+        this.dropVelocity.addScaledVector(forward, Math.max(0, 2.1 - this.dropVelocity.dot(forward)));
+        if (this.soldier.coverWall) {
+          const normal = this.soldier.coverNormal;
+          this.dropVelocity.addScaledVector(normal, .36 - this.dropVelocity.dot(normal));
+          this.restRotation.setFromEuler(this.footRotation.set(0, yaw + .12, Math.PI * .48, 'YXZ'));
+        }
+      }
+      this.tumbleRifle(physics, dt);
+      this.skin.rifle.position.copy(this.dropPoint);
+      this.skin.rifle.quaternion.copy(this.dropRotation);
+      this.skin.magazine.position.copy(this.dropPoint);
+      this.skin.magazine.quaternion.copy(this.dropRotation);
+      this.skin.magazine.scale.setScalar(this.magazineDroppedWithRifle ? 1 : .002);
+      return;
+    }
     this.tumbleRifle(physics, dt);
     for (let index = 0; index < this.joints.length; index += 1) {
       const point = this.joints[index];
@@ -694,9 +794,11 @@ export class BotRig {
       part.near.dispose();
       part.far.dispose();
     }
-    this.cloth.dispose();
-    this.fabric.map.dispose();
-    this.fabric.dispose();
+    this.soldier?.dispose();
+    this.skin.magazine?.geometry.dispose();
+    this.cloth?.dispose();
+    this.fabric?.map.dispose();
+    this.fabric?.dispose();
     this.metal.dispose();
     this.group.removeFromParent();
   }

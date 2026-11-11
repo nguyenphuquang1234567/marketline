@@ -387,6 +387,7 @@ export class RenderGraph {
       glslVersion: THREE.GLSL3, vertexShader: S.motionVertex, fragmentShader: S.motionFragment,
       uniforms: {
         previousVP: { value: this.prevVP }, previousModel: { value: new THREE.Matrix4() }, deforming: { value: 0 },
+        previousSkin: { value: null }, hasPreviousSkin: { value: false },
         sceneDepth: { value: null }, texel: { value: this.texel }, lowPrecision: { value: this.lowPrecision },
       },
       depthTest: false, depthWrite: false, toneMapped: false, blending: THREE.NoBlending,
@@ -478,16 +479,30 @@ export class RenderGraph {
   trackMotion(root, active = () => true) {
     root.traverse(source => {
       if (!source.isMesh || source.isInstancedMesh || !source.geometry.attributes.normal || source.material.transparent) return;
-      const proxy = new THREE.Mesh(source.geometry, this.motion);
+      const proxy = source.isSkinnedMesh
+        ? new THREE.SkinnedMesh(source.geometry, this.motion)
+        : new THREE.Mesh(source.geometry, this.motion);
+      let previousSkin = null;
+      if (source.isSkinnedMesh) {
+        proxy.skeleton = source.skeleton;
+        proxy.bindMatrix.copy(source.bindMatrix);
+        proxy.frustumCulled = false;
+        const boneCount = source.skeleton.bones.length;
+        previousSkin = new THREE.DataTexture(new Float32Array(boneCount * 16), 4, boneCount, THREE.RGBAFormat, THREE.FloatType);
+        previousSkin.needsUpdate = true;
+      }
       proxy.matrixAutoUpdate = false;
       const previous = new THREE.Matrix4();
+      const entry = { source, proxy, previous, previousSkin, skinReady: false, root, active };
       proxy.onBeforeRender = () => {
         this.motion.uniforms.previousModel.value.copy(this.valid ? previous : proxy.matrix);
         this.motion.uniforms.deforming.value = Number(proxy.geometry.hasAttribute('previousPosition'));
+        this.motion.uniforms.previousSkin.value = previousSkin;
+        this.motion.uniforms.hasPreviousSkin.value = Boolean(this.valid && entry.skinReady);
         this.motion.uniformsNeedUpdate = true;
       };
       this.motionScene.add(proxy);
-      this.motionMeshes.push({ source, proxy, previous, root, active });
+      this.motionMeshes.push(entry);
     });
   }
 
@@ -509,8 +524,15 @@ export class RenderGraph {
       proxy.matrixWorldNeedsUpdate = true;
     }
     this.renderer.render(this.motionScene, this.camera);
-    for (const { proxy, previous } of this.motionMeshes) {
+    for (const entry of this.motionMeshes) {
+      const { proxy, previous, previousSkin } = entry;
       previous.copy(proxy.matrix);
+      if (previousSkin && proxy.visible) {
+        const data = previousSkin.image.data;
+        data.set(proxy.skeleton.boneMatrices.subarray(0, data.length));
+        previousSkin.needsUpdate = true;
+        entry.skinReady = true;
+      } else if (previousSkin) entry.skinReady = false;
       const priorPositions = proxy.geometry.getAttribute('previousPosition');
       if (!priorPositions || !proxy.visible) continue;
       priorPositions.array.set(proxy.geometry.attributes.position.array);
@@ -644,6 +666,7 @@ export class RenderGraph {
   dispose() {
     for (const target of this.targets) target.dispose();
     this.shadows.dispose();
+    for (const { previousSkin } of this.motionMeshes) previousSkin?.dispose();
     this.motion.dispose();
     this.environment?.dispose();
     this.weaponSun.shadow.dispose();

@@ -535,7 +535,7 @@ export class CharacterController {
     }
   }
 
-  step(dt, { wish, speed = 4.6, jump = false, crouch = false, mantle = false }) {
+  step(dt, { wish, speed = 4.6, jump = false, crouch = false, mantle = false, maxAcceleration, maxBraking }) {
     this.landed = 0;
     if (!this.mantleTime && mantle) this.startMantle(wish);
     if (this.mantleTime > 0) {
@@ -555,8 +555,19 @@ export class CharacterController {
     }
     const target = this.wishVelocity.copy(wish).setY(0).clampLength(0, 1).multiplyScalar(speed);
     const response = 1 - Math.exp(-dt * (this.grounded ? (target.lengthSq() > 0 ? 17 : 22) : 3.8));
-    this.velocity.x += (target.x - this.velocity.x) * response;
-    this.velocity.z += (target.z - this.velocity.z) * response;
+    let dx = (target.x - this.velocity.x) * response;
+    let dz = (target.z - this.velocity.z) * response;
+    if (maxAcceleration !== undefined) {
+      const braking = dx * this.velocity.x + dz * this.velocity.z < 0;
+      const budget = (braking ? maxBraking ?? maxAcceleration : maxAcceleration) * dt;
+      const change = Math.hypot(dx, dz);
+      if (change > budget) {
+        dx *= budget / change;
+        dz *= budget / change;
+      }
+    }
+    this.velocity.x += dx;
+    this.velocity.z += dz;
     if (jump && this.grounded && !crouch) {
       this.grounded = false;
       this.stepSurface = null;

@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { Box3, Group, Scene, Vector3 } from 'three';
+import { Box3, Group, Scene, Texture, Vector3 } from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { BotRig } from '../src/bot-rig.js';
 import { BotSystem, NavWorld } from '../src/bots.js';
 import { CharacterController, StaticBVH } from '../src/physics.js';
 import { RigidWorld } from '../src/rigid-world.js';
+import { soldierVariants } from '../src/soldier-model.js';
 
 const vector = (x, y, z) => new Vector3(x, y, z);
 const box = (min, max, surface = 'concrete') => ({
@@ -244,6 +247,53 @@ test('a running bot brakes at a wall and pivots with planted feet', () => {
   rig.dispose();
 });
 
+test('an operative looks into a turn before the hips and keeps the collar joined during a reversal', () => {
+  const physics = new StaticBVH([]);
+  const controller = new CharacterController(physics, vector(0, 0, 0));
+  const rig = new BotRig(new Group(), 3, 1);
+  const bot = {
+    position: controller.position, velocity: controller.velocity, height: controller.height, controller,
+    yaw: 0, pitch: 0, kick: 0, clock: 0, state: 'engage', visibleTarget: true,
+  };
+  const forward = vector(0, 0, -1);
+  const direction = vector(0, 0, 0);
+  const yawOf = mesh => {
+    direction.copy(forward).applyQuaternion(mesh.quaternion);
+    return Math.atan2(-direction.x, -direction.z);
+  };
+  rig.pose(bot, physics, 1 / 60);
+  for (let frame = 1; frame <= 8; frame++) {
+    bot.yaw = frame * .09;
+    bot.clock = frame / 60;
+    rig.pose(bot, physics, 1 / 60);
+  }
+  const hips = direction.subVectors(rig.joints[6], rig.joints[3]);
+  const hipsYaw = Math.atan2(-hips.z, hips.x);
+  const chestYaw = yawOf(rig.skin.torso);
+  assert.ok(yawOf(rig.skin.head) > chestYaw + .08);
+  assert.ok(chestYaw > hipsYaw + .08);
+
+  const wish = vector(1, 0, -.35);
+  const torso = rig.skin.torso, head = rig.skin.head;
+  const collar = vector(0, 0, 0), gaiter = vector(0, 0, 0), up = vector(0, 0, 0);
+  for (let tick = 1; tick <= 285; tick++) {
+    bot.clock = (tick + 16) / 120;
+    if (tick === 150) wish.set(-.76, 0, .54);
+    controller.step(1 / 120, { wish, speed: 2.85, maxAcceleration: 13, maxBraking: 17 });
+    if (tick % 2) continue;
+    rig.pose(bot, physics, 1 / 60);
+    collar.set(0, .592 * torso.scale.y, 0).applyQuaternion(torso.quaternion).add(torso.position);
+    gaiter.set(0, -.182, .016).applyQuaternion(head.quaternion).add(head.position);
+    up.set(0, 1, 0).applyQuaternion(torso.quaternion);
+    assert.ok(gaiter.sub(collar).dot(up) < .008, 'the neck gaiter overlaps the collar');
+    const [pelvis, , , leftHip, , leftFoot, rightHip, , rightFoot] = rig.joints;
+    assert.ok(pelvis.y - bot.position.y > .57, 'the standing pelvis stays above a crouch dip');
+    assert.ok(leftHip.distanceTo(leftFoot) < .92 && rightHip.distanceTo(rightFoot) < .92,
+      'the catch step keeps both boots within leg reach');
+  }
+  rig.dispose();
+});
+
 test('boots lift over a curb before swinging forward', () => {
   const physics = new StaticBVH([box([-3, 0, -6.3], [3, .17, -3.3])]);
   const controller = new CharacterController(physics, vector(0, .002, 0));
@@ -297,6 +347,65 @@ test('reactive crates stack, sleep, and wake when their support is shot', () => 
   rigid.reset();
   assert.equal(crates[0].position.x, 0);
   assert.equal(crates[2].position.y, 1.25);
+});
+
+test('soldier fall clips keep limbs apart and above the floor beside either wall', async () => {
+  const bytes = await readFile(new URL('../src/assets/soldier-rig.glb', import.meta.url));
+  const loader = new GLTFLoader();
+  loader.register(() => ({ name: 'testTexture', loadTexture: async () => new Texture({}) }));
+  const asset = soldierVariants(await loader.parseAsync(new Uint8Array(bytes).buffer, ''));
+  const point = new Vector3();
+  const joint = new Vector3();
+
+  try {
+    for (const side of [-1, 1]) for (const besideWall of [false, true]) {
+      const wall = side === 1 ? box([.455, 0, -1], [.625, 2.7, 1]) : box([-.625, 0, -1], [-.455, 2.7, 1]);
+      const physics = new StaticBVH(besideWall ? [wall] : []);
+      const controller = new CharacterController(physics, vector(0, 0, 0));
+      controller.step(1 / 120, { wish: vector(0, 0, 0) });
+      const bot = {
+        position: controller.position, velocity: controller.velocity, height: controller.height, controller,
+        yaw: 0, pitch: 0, kick: 0, clock: .5, reloading: 0, state: 'engage', visibleTarget: true,
+      };
+      const rig = new BotRig(new Group(), 0, 0, asset.templates[0]);
+      const { root, mesh, bones } = rig.soldier;
+      try {
+        rig.pose(bot, physics, 1 / 60);
+        rig.fall(vector(side, .05, 0), bot.velocity);
+        let closestWall = Infinity;
+        for (let tick = 0; tick <= 192; tick++) {
+          rig.tumble(physics, 1 / 120);
+          if (tick % 8 !== 0) continue;
+          root.updateMatrixWorld(true);
+          let floorGap = Infinity;
+          closestWall = Infinity;
+          for (let vertex = 0; vertex < mesh.geometry.attributes.position.count; vertex++) {
+            mesh.getVertexPosition(vertex, point).applyMatrix4(mesh.matrixWorld);
+            floorGap = Math.min(floorGap, point.y);
+            if (besideWall && Math.abs(point.z) <= 1 && point.y <= 2.7) {
+              closestWall = Math.min(closestWall, .455 - point.x * side);
+            }
+          }
+          assert.ok(floorGap > -.004, `mesh intersects floor by ${-floorGap} m at tick ${tick}`);
+          assert.ok(closestWall > -.004, `mesh intersects wall by ${-closestWall} m at tick ${tick}`);
+        }
+        assert.equal(rig.soldier.fallClip, 'death_' + (besideWall ? 'cover_' : '') + (side === 1 ? 'right' : 'left'));
+        if (besideWall) assert.ok(closestWall < .025, 'the soldier rests against the wall');
+        for (const arm of ['L', 'R']) {
+          bones.get('hand' + arm).getWorldPosition(point);
+          bones.get('forearm' + arm).getWorldPosition(joint);
+          assert.ok(Math.abs(point.distanceTo(joint) - .229) < .005, 'the forearm retains its bind length');
+        }
+        bones.get('footL').getWorldPosition(point);
+        bones.get('footR').getWorldPosition(joint);
+        assert.ok(point.distanceTo(joint) > .24, 'the boots finish in separate positions');
+      } finally {
+        rig.dispose();
+      }
+    }
+  } finally {
+    asset.dispose();
+  }
 });
 
 test('a fast reactive tin hits a thin static wall and stops', () => {

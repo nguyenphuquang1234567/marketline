@@ -246,7 +246,7 @@ export class NavWorld {
 }
 
 export class BotSystem {
-  constructor({ scene, physics, world, seed, onFire = () => {}, onStep = () => {}, isObscured = () => false }) {
+  constructor({ scene, physics, world, seed, soldier, onFire = () => {}, onStep = () => {}, isObscured = () => false }) {
     this.scene = scene;
     this.physics = physics;
     this.world = world;
@@ -274,7 +274,7 @@ export class BotSystem {
       const group = new Group();
       group.name = name;
       scene.add(group);
-      const rig = new BotRig(group, index, team);
+      const rig = new BotRig(group, index, team, soldier?.[team]);
       const spawn = this.spawnPoint(team, slot);
       const controller = new CharacterController(physics, spawn);
       return {
@@ -356,7 +356,8 @@ export class BotSystem {
     bot.rig.fall(direction, bot.velocity);
   }
 
-  hit(bot, amount = 0) {
+  hit(bot, amount = 0, direction = Vector3UnitY) {
+    bot.rig.soldier?.impact(direction, amount);
     bot.kick = Math.min(1.4, bot.kick + 0.25 + amount * 0.009);
     bot.alertAt = this.time;
     if (amount > 22) bot.planAt = Math.min(bot.planAt, this.time + 0.1);
@@ -642,6 +643,7 @@ export class BotSystem {
     direction.normalize();
     bot.burst -= 1;
     bot.magazine -= 1;
+    bot.rig.soldier?.fire();
     bot.kick = Math.min(1.1, bot.kick + 0.53);
     bot.shootAt = this.time + (bot.burst ? 0.105 + this.random() * 0.045 : config.burstPause + this.random() * 0.55);
     this.onFire(bot, muzzle, direction);
@@ -698,8 +700,25 @@ export class BotSystem {
       }
       const crouch = (bot.state === 'cover' && stationary && !bot.visibleTarget)
         || (bot.state === 'engage' && (bot.slot % 2 === 0 || bot.health < 55) && bot.clock % 4.9 > 2.0);
-      const speed = crouch ? 2.2 : bot.visibleTarget ? 3.15 : bot.state === 'flank' ? 4.9 : 4.22;
-      bot.controller.step(dt, { wish, speed, crouch });
+      let speed = crouch ? 2.15 : bot.visibleTarget ? 2.85 : bot.state === 'flank' ? 4.45 : 3.7;
+      const currentSpeed = Math.hypot(bot.velocity.x, bot.velocity.z);
+      const wishSpeed = wish.length();
+      if (wishSpeed > .05) {
+        if (!bot.visibleTarget) {
+          const facing = (-Math.sin(bot.yaw) * wish.x - Math.cos(bot.yaw) * wish.z) / wishSpeed;
+          speed *= .24 + .76 * MathUtils.smoothstep(facing, -.1, .84);
+        }
+        if (currentSpeed > 1.15) {
+          const alignment = (bot.velocity.x * wish.x + bot.velocity.z * wish.z) / (currentSpeed * wishSpeed);
+          speed *= .48 + .52 * MathUtils.smoothstep(alignment, -.52, .94);
+        }
+      }
+      const finalWaypoint = bot.pathIndex === bot.path.length - 1 ? bot.path[bot.pathIndex] : null;
+      if (finalWaypoint) {
+        const remaining = Math.hypot(finalWaypoint.x - bot.position.x, finalWaypoint.z - bot.position.z);
+        speed = Math.min(speed, Math.sqrt(Math.max(.15, remaining - .39) * 21));
+      }
+      bot.controller.step(dt, { wish, speed, crouch, maxAcceleration: 13, maxBraking: 17 });
       bot.height = bot.controller.height;
       this.engage(bot, config);
       if (bot.alive && this.frame % 2 === 0) {
