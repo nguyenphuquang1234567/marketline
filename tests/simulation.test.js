@@ -244,6 +244,53 @@ test('a running bot brakes at a wall and pivots with planted feet', () => {
   rig.dispose();
 });
 
+test('an operative looks into a turn before the hips and keeps the collar joined during a reversal', () => {
+  const physics = new StaticBVH([]);
+  const controller = new CharacterController(physics, vector(0, 0, 0));
+  const rig = new BotRig(new Group(), 3, 1);
+  const bot = {
+    position: controller.position, velocity: controller.velocity, height: controller.height, controller,
+    yaw: 0, pitch: 0, kick: 0, clock: 0, state: 'engage', visibleTarget: true,
+  };
+  const forward = vector(0, 0, -1);
+  const direction = vector(0, 0, 0);
+  const yawOf = mesh => {
+    direction.copy(forward).applyQuaternion(mesh.quaternion);
+    return Math.atan2(-direction.x, -direction.z);
+  };
+  rig.pose(bot, physics, 1 / 60);
+  for (let frame = 1; frame <= 8; frame++) {
+    bot.yaw = frame * .09;
+    bot.clock = frame / 60;
+    rig.pose(bot, physics, 1 / 60);
+  }
+  const hips = direction.subVectors(rig.joints[6], rig.joints[3]);
+  const hipsYaw = Math.atan2(-hips.z, hips.x);
+  const chestYaw = yawOf(rig.skin.torso);
+  assert.ok(yawOf(rig.skin.head) > chestYaw + .08);
+  assert.ok(chestYaw > hipsYaw + .08);
+
+  const wish = vector(1, 0, -.35);
+  const torso = rig.skin.torso, head = rig.skin.head;
+  const collar = vector(0, 0, 0), gaiter = vector(0, 0, 0), up = vector(0, 0, 0);
+  for (let tick = 1; tick <= 285; tick++) {
+    bot.clock = (tick + 16) / 120;
+    if (tick === 150) wish.set(-.76, 0, .54);
+    controller.step(1 / 120, { wish, speed: 2.85, maxAcceleration: 13, maxBraking: 17 });
+    if (tick % 2) continue;
+    rig.pose(bot, physics, 1 / 60);
+    collar.set(0, .592 * torso.scale.y, 0).applyQuaternion(torso.quaternion).add(torso.position);
+    gaiter.set(0, -.182, .016).applyQuaternion(head.quaternion).add(head.position);
+    up.set(0, 1, 0).applyQuaternion(torso.quaternion);
+    assert.ok(gaiter.sub(collar).dot(up) < .008, 'the neck gaiter overlaps the collar');
+    const [pelvis, , , leftHip, , leftFoot, rightHip, , rightFoot] = rig.joints;
+    assert.ok(pelvis.y - bot.position.y > .57, 'the standing pelvis stays above a crouch dip');
+    assert.ok(leftHip.distanceTo(leftFoot) < .92 && rightHip.distanceTo(rightFoot) < .92,
+      'the catch step keeps both boots within leg reach');
+  }
+  rig.dispose();
+});
+
 test('boots lift over a curb before swinging forward', () => {
   const physics = new StaticBVH([box([-3, 0, -6.3], [3, .17, -3.3])]);
   const controller = new CharacterController(physics, vector(0, .002, 0));

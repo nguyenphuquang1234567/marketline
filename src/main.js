@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import soldierURL from './assets/soldier-rig.glb?url&inline';
+import { soldierVariants } from './soldier-model.js';
 import { buildWorld } from './world.js';
 import { StaticBVH, CharacterController } from './physics.js';
 import { RigidWorld } from './rigid-world.js';
@@ -100,14 +103,15 @@ class Marketline {
     this.player = { id: 'player', name: 'YOU', team: 0, position: this.controller.position };
     this.weapon = new WeaponView(this.weaponScene, SEED);
     const corpse = new THREE.Group();
-    this.playerRig = new BotRig(corpse, 7, 0);
+    this.soldiers = soldierVariants(await new GLTFLoader().loadAsync(soldierURL));
+    this.playerRig = new BotRig(corpse, 7, 0, this.soldiers.templates[0]);
     corpse.visible = false;
     this.scene.add(corpse);
     this.effects = new Effects(this.scene, this.physics, SEED ^ 0x2718, this.audio);
     this.ui.progress('Preparing squads');
     await this.paint();
     this.botSystem = new BotSystem({
-      scene: this.scene, physics: this.physics, world: this.world, seed: SEED,
+      scene: this.scene, physics: this.physics, world: this.world, seed: SEED, soldier: this.soldiers.templates,
       onFire: (bot, start, direction) => this.botFire(bot, start, direction),
       onStep: (bot, surface) => this.botStep(bot, surface),
       isObscured: (a, b) => this.effects.smokeBlocks(a, b),
@@ -601,7 +605,7 @@ class Marketline {
       this.ui.hurt(wrapAngle(Math.atan2(-direction.x, direction.z) - this.yaw), this.elapsed);
       this.audio.cue('damage');
     } else {
-      this.botSystem.hit(target, value);
+      this.botSystem.hit(target, value, direction);
       if (shooter === this.player) target.revealedUntil = this.elapsed + 1.4;
     }
     if (shooter === this.player && target !== shooter) {
@@ -818,6 +822,7 @@ class Marketline {
     this.world.dispose();
     this.weapon.dispose();
     this.playerRig.dispose();
+    this.soldiers.dispose();
     const geometries = new Set(), materials = new Set(), textures = new Set();
     this.scene.traverse(object => {
       if (object.geometry) geometries.add(object.geometry);

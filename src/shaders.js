@@ -428,17 +428,40 @@ void main() {
 }`;
 
 export const motionVertex = /* glsl */ `
+#include <skinning_pars_vertex>
 uniform mat4 previousVP;
 uniform mat4 previousModel;
 uniform float deforming;
 in vec3 previousPosition;
 out vec3 surfaceNormal;
 out vec4 previousClip;
+#ifdef USE_SKINNING
+  uniform highp sampler2D previousSkin;
+  uniform bool hasPreviousSkin;
+  mat4 oldBone(float index) {
+    int bone = int(index);
+    return mat4(texelFetch(previousSkin, ivec2(0,bone), 0), texelFetch(previousSkin, ivec2(1,bone), 0),
+      texelFetch(previousSkin, ivec2(2,bone), 0), texelFetch(previousSkin, ivec2(3,bone), 0));
+  }
+#endif
 void main(){
-  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);
-  vec3 oldPosition=deforming>.5 ? previousPosition : position;
+  vec3 transformed = position;
+  vec3 objectNormal = normal;
+  #include <skinbase_vertex>
+  #include <skinnormal_vertex>
+  #include <skinning_vertex>
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(transformed,1.);
+  vec3 oldPosition=deforming>.5 ? previousPosition : transformed;
   previousClip=previousVP*previousModel*vec4(oldPosition,1.);
-  surfaceNormal=normalMatrix*normal;
+  #ifdef USE_SKINNING
+    if (hasPreviousSkin) {
+      vec4 vertex = bindMatrix * vec4(position,1.);
+      vec4 oldWorld = oldBone(skinIndex.x)*vertex*skinWeight.x + oldBone(skinIndex.y)*vertex*skinWeight.y
+        + oldBone(skinIndex.z)*vertex*skinWeight.z + oldBone(skinIndex.w)*vertex*skinWeight.w;
+      previousClip = previousVP * oldWorld;
+    }
+  #endif
+  surfaceNormal=normalMatrix*objectNormal;
 }`;
 
 export const motionFragment = /* glsl */ `

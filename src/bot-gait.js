@@ -16,11 +16,22 @@ function horizontalDistance(a, b) {
   return Math.hypot(a.x - b.x, a.z - b.z);
 }
 
+function swingTravel(progress, riseDelay, speed) {
+  const time = MathUtils.clamp((progress - riseDelay) / (1 - riseDelay), 0, 1);
+  const ramp = .16;
+  const middleSpeed = 1 / (1 - ramp);
+  let travel = (time - ramp * .5) * middleSpeed;
+  if (time < ramp) travel = time * time * middleSpeed / (2 * ramp);
+  else if (time > 1 - ramp) travel = 1 - (1 - time) ** 2 * middleSpeed / (2 * ramp);
+  return MathUtils.lerp(MathUtils.smoothstep(time, 0, 1), travel, MathUtils.smoothstep(speed, 1.5, 3.2));
+}
+
 function footState() {
   return {
     position: new Vector3(), anchor: new Vector3(), start: new Vector3(), goal: new Vector3(),
+    takeoffDirection: new Vector3(),
     yaw: 0, startYaw: 0, goalYaw: 0, roll: 0, swinging: false, surface: 'asphalt',
-    elapsed: 0, duration: 0, clearance: 0, lead: 0, plantedFor: .25,
+    elapsed: 0, duration: 0, clearance: 0, lead: 0, plantedFor: .25, takeoffSpeed: 0, catchStep: false,
   };
 }
 
@@ -78,6 +89,12 @@ export class BotGait {
   reset(bot, physics, yaw, ready, crouch) {
     this.nextFoot = this.firstFoot;
     this.sinceStep = .5;
+    this.contactAge = .5;
+    this.pivotFoot = -1;
+    this.pivotAge = 0;
+    this.weight = 0;
+    this.hasMovingStep = false;
+    this.previousSpeed = Math.hypot(bot.velocity.x, bot.velocity.z);
     this.lift = 0;
     this.shift = 0;
     this.landed = null;
@@ -101,8 +118,13 @@ export class BotGait {
     const foot = this.feet[index];
     this.nextFoot = 1 - index;
     this.sinceStep = 0;
+    this.pivotFoot = -1;
+    if (speed > MOVING) this.hasMovingStep = true;
     foot.elapsed = 0;
     foot.duration = duration;
+    foot.takeoffSpeed = speed;
+    foot.takeoffDirection.set(bot.velocity.x, 0, bot.velocity.z).normalize();
+    foot.catchStep = false;
     foot.clearance = speed > MOVING ? MathUtils.clamp(.062 + speed * .015 - crouch * .026, .06, .13) : .055;
     foot.lead = lead;
     foot.swinging = true;
@@ -115,13 +137,14 @@ export class BotGait {
   chooseStep(yaw, speed, interval) {
     const [left, right] = this.feet;
     if (speed > MOVING) {
+      this.pivotFoot = -1;
       const next = this.nextFoot;
       const foot = this.feet[next];
       const other = this.feet[1 - next];
       if (foot.swinging || foot.plantedFor < .05
-        || other.swinging && (speed < 1.55 || other.elapsed < other.duration * .56)) return -1;
+        || other.swinging && (speed < 1.55 || other.elapsed < other.duration * .60)) return -1;
       const lag = horizontalDistance(foot.anchor, this.neutrals[next]);
-      const time = lag > .32 ? Math.min(interval, .133) : interval;
+      const time = lag > .43 ? Math.min(interval, .175) : interval;
       return this.sinceStep >= time && lag > .085 ? next : -1;
     }
     if (left.swinging || right.swinging || this.sinceStep < .25) return -1;
@@ -130,37 +153,47 @@ export class BotGait {
       Math.abs(angleDelta(yaw + (index ? -.095 : .095), foot.yaw)) / .44,
     );
     const leftError = stanceError(left, 0), rightError = stanceError(right, 1);
-    return Math.max(leftError, rightError) > 1 ? Number(rightError > leftError) : -1;
+    if (Math.max(leftError, rightError) <= 1) {
+      this.pivotFoot = -1;
+      return -1;
+    }
+    const pivot = Number(rightError > leftError);
+    if (this.pivotFoot !== pivot) {
+      this.pivotFoot = pivot;
+      this.pivotAge = 0;
+    }
+    return this.pivotAge >= .065 ? pivot : -1;
   }
 
-  swingFoot(index, dt, bot, physics, yaw, speed) {
+  swingFoot(index, dt, bot, physics, yaw) {
     const foot = this.feet[index];
     if (!foot.swinging) return;
     const remaining = foot.duration - foot.elapsed;
     foot.elapsed = Math.min(foot.duration, foot.elapsed + dt);
     const progress = foot.elapsed / foot.duration;
-    if (progress < .73) {
+    // Pull the landing back under the body when the stride loses its forward momentum.
+    const braking = foot.takeoffSpeed > 1.1 && bot.velocity.dot(foot.takeoffDirection) < foot.takeoffSpeed * .66;
+    if (progress < .81 && braking) foot.catchStep = true;
+    if (progress < (foot.catchStep ? .9 : .73)) {
       const wantedYaw = yaw + (index ? -.095 : .095);
-      const response = damp(18, dt);
+      const response = damp(foot.catchStep ? 26 : 18, dt);
       foot.goalYaw += angleDelta(wantedYaw, foot.goalYaw) * response;
-      foot.surface = this.target(this.destination, this.neutrals[index], bot, physics, foot.goalYaw, remaining + foot.lead);
+      const prediction = foot.catchStep ? Math.min(remaining, .08) : remaining + foot.lead;
+      foot.surface = this.target(this.destination, this.neutrals[index], bot, physics, foot.goalYaw, prediction);
       foot.goal.lerp(this.destination, response);
     }
     const rise = foot.goal.y - foot.start.y;
     const climb = MathUtils.smoothstep(rise, .034, .102);
-    const eased = MathUtils.smoothstep(progress, climb * .145, 1);
+    const eased = swingTravel(progress, climb * .145, foot.takeoffSpeed);
     const arch = 16 * progress ** 2 * (1 - progress) ** 2;
     foot.position.lerpVectors(foot.start, foot.goal, eased);
     const elevation = rise >= 0
       ? MathUtils.smoothstep(progress, 0, .56 - climb * .37)
-      : MathUtils.smoothstep(progress, .38, 1);
+      : MathUtils.smoothstep(progress, .38 + .36 * MathUtils.smoothstep(-rise, .035, .10), 1);
     foot.position.y = foot.start.y + rise * elevation + foot.clearance * arch;
     foot.yaw = foot.startYaw + angleDelta(foot.goalYaw, foot.startYaw) * eased;
     const toeOff = 1 - climb * (1 - MathUtils.smoothstep(progress, .23, .62));
-    foot.roll = -Math.sin(progress * TAU) * .225 * Math.min(.55 + speed * .12, 1) * toeOff;
-    this.lift += Math.sin(progress * TAU) * Math.min(speed * .003, .012) + arch * .007;
-    this.shift += (index ? -1 : 1) * arch * .021;
-
+    foot.roll = -Math.sin(progress * TAU) * .225 * Math.min(.55 + foot.takeoffSpeed * .12, 1) * toeOff;
     if (progress >= 1) {
       foot.surface = this.ground(foot.goal, bot, physics, foot.goalYaw);
       foot.anchor.copy(foot.goal);
@@ -170,13 +203,41 @@ export class BotGait {
       foot.swinging = false;
       foot.plantedFor = 0;
       this.landed = foot.surface;
+      this.contactAge = 0;
     }
+  }
+
+  transferWeight(dt, speed, crouch, interval, running) {
+    const [left, right] = this.feet;
+    const motion = MathUtils.smoothstep(speed, MOVING, .78);
+    let support = 0;
+    if (left.swinging !== right.swinging) {
+      const swinging = left.swinging ? left : right;
+      const phase = swinging.elapsed / swinging.duration;
+      support = (left.swinging ? 1 : -1) * (1 - .48 * MathUtils.smoothstep(phase, .70, 1));
+    } else if (this.pivotFoot >= 0) {
+      support = (this.pivotFoot ? -1 : 1) * MathUtils.smoothstep(this.pivotAge, 0, .065);
+    } else if (!left.swinging && !right.swinging) {
+      const approach = MathUtils.smoothstep(this.sinceStep / interval, .61, .96);
+      support = (this.nextFoot ? -1 : 1) * approach * motion;
+    }
+    this.weight += (support - this.weight) * damp(14, dt);
+    this.shift = this.weight * MathUtils.lerp(.052, .029, running) * (1 - crouch * .2);
+
+    const contactPhase = MathUtils.clamp(this.contactAge / interval, 0, 1);
+    const walkRise = (Math.sin(Math.PI * contactPhase) - .45) * .032;
+    const runRise = -Math.sin(TAU * contactPhase) * .016;
+    const targetLift = MathUtils.lerp(walkRise, runRise, running) * motion * (1 - crouch * .42);
+    this.lift += (targetLift - this.lift) * damp(22, dt);
   }
 
   update(dt, bot, physics, yaw, ready, crouch, speed) {
     this.landed = null;
-    this.lift = this.shift = 0;
+    const brakingHard = speed - this.previousSpeed < -6 * dt;
+    this.previousSpeed = speed;
     this.sinceStep += dt;
+    this.contactAge = Math.min(.6, this.contactAge + dt);
+    this.pivotAge += dt;
     for (let i = 0; i < 2; i++) this.stance(this.neutrals[i], bot, yaw, i, ready, crouch);
     if (!bot.controller.grounded) {
       for (let i = 0; i < 2; i++) {
@@ -191,6 +252,10 @@ export class BotGait {
         foot.anchor.copy(foot.position);
       }
       this.grounded = false;
+      this.pivotFoot = -1;
+      this.weight *= 1 - damp(14, dt);
+      this.shift *= 1 - damp(14, dt);
+      this.lift *= 1 - damp(22, dt);
       return;
     }
 
@@ -200,20 +265,29 @@ export class BotGait {
         foot.position.copy(foot.anchor);
       }
       this.landed = this.feet[0].surface;
+      this.contactAge = 0;
       this.grounded = true;
     }
     for (let i = 0; i < 2; i++) {
       const foot = this.feet[i];
-      if (foot.swinging) this.swingFoot(i, dt, bot, physics, yaw, speed);
+      if (foot.swinging) this.swingFoot(i, dt, bot, physics, yaw);
       else foot.plantedFor += dt;
     }
 
-    const interval = MathUtils.clamp(.43 - speed * .062, .155, .42) * (1 - crouch * .16);
+    const interval = MathUtils.clamp(.46 - speed * .054, .155, .42) * (1 - crouch * .16);
+    const running = MathUtils.smoothstep(speed, 1.65, 3.5) * (1 - crouch * .56);
+    if (speed <= MOVING && this.feet.every(foot => !foot.swinging)) this.hasMovingStep = false;
     const index = this.chooseStep(yaw, speed, interval);
-    if (index < 0) return;
-    const running = MathUtils.smoothstep(speed, 1.65, 3.65) * (1 - crouch * .56);
-    const duration = speed > MOVING ? interval * MathUtils.lerp(.83, 1.16, running) : .255;
-    const lead = speed > MOVING ? interval * MathUtils.lerp(.55, .46, running) : 0;
-    this.begin(index, bot, physics, yaw, speed, crouch, duration, lead);
+    if (index >= 0) {
+      const steadySwing = interval * MathUtils.lerp(.86, 1.26, running);
+      const other = this.feet[1 - index];
+      const recovering = speed < 1.8 && (other.catchStep || (brakingHard && other.takeoffSpeed > 1.6));
+      const duration = speed > MOVING
+        ? (this.hasMovingStep && !recovering ? steadySwing : Math.min(.22, steadySwing))
+        : .255;
+      const lead = speed > MOVING ? interval * MathUtils.lerp(.52, .37, running) : 0;
+      this.begin(index, bot, physics, yaw, speed, crouch, duration, lead);
+    }
+    this.transferWeight(dt, speed, crouch, interval, running);
   }
 }
