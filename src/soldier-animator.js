@@ -1,11 +1,11 @@
 import { MathUtils, Quaternion, Vector3 } from 'three';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { angleDelta } from './bot-gait.js';
+import { SoldierFallContact } from './soldier-fall-contact.js';
 import { SoldierFootPlacement } from './soldier-foot-placement.js';
 
 const { clamp, lerp, smoothstep } = MathUtils;
 const UP = new Vector3(0, 1, 0);
-const DOWN = new Vector3(0, -1, 0);
 const FORWARD = new Vector3(0, 0, -1);
 const WALL_GAP = .008;
 
@@ -15,10 +15,6 @@ const locomotion = {
   crouch_forward: [1.11, .57], crouch_back: [.98, .59],
   crouch_left: [.88, .56], crouch_right: [.88, .56],
 };
-const BODY_CONTACTS = [
-  ['pelvis', .135], ['chest', .125], ['head', .12],
-  ['upper_armL', .09], ['upper_armR', .09], ['shinL', .085], ['shinR', .085],
-];
 export class SoldierAnimator {
   constructor({ root, clips, fallSurface }, group) {
     this.root = clone(root);
@@ -38,6 +34,7 @@ export class SoldierAnimator {
     this.aimPivot = new Vector3();
     this.root.updateMatrixWorld(true);
     this.feet = new SoldierFootPlacement(this.bones);
+    this.fallContact = new SoldierFallContact(this.mesh, this.bones, fallSurface);
     this.parts = [this.root, ...this.bones.values()].map(mesh => ({ mesh }));
     this.velocity = new Vector3();
     this.previousPosition = new Vector3();
@@ -318,7 +315,7 @@ export class SoldierAnimator {
     const sideways = Math.abs(x) > Math.abs(z);
     const name = sideways ? (x > 0 ? 'right' : 'left') : (z > 0 ? 'back' : 'forward');
     this.fallClip = 'death_' + name;
-    this.fallLift = 0;
+    this.fallContact.begin(physics, this.fallOrigin);
     this.sampleVector.set(x, 0, z).normalize();
     this.sampleVector.applyQuaternion(this.root.quaternion).multiplyScalar(.88);
     this.point.copy(this.fallOrigin).addScaledVector(UP, .67);
@@ -345,21 +342,20 @@ export class SoldierAnimator {
     this.fallClip = right ? 'death_cover_right' : 'death_cover_left';
   }
 
-  supportFall(physics, age, dt) {
+  approachCover(age) {
     const wall = this.coverWall;
+    if (!wall) return;
     let clearance = Infinity;
     let shoulderClearance = Infinity;
-    let lift = 0;
     // Skin vertices at the extremities of each body part include the fingers,
     // boot sides and gear that can reach a surface before their joints do.
     for (const { vertex, bone } of this.fallSurface) {
       this.mesh.getVertexPosition(vertex, this.point).applyMatrix4(this.mesh.matrixWorld);
-      lift = Math.max(lift, .005 - this.point.y);
-      if (!wall || this.point.y < wall.min.y - .01 || this.point.y > wall.max.y + .01) continue;
+      if (this.point.y < wall.min.y - .01 || this.point.y > wall.max.y + .01) continue;
       const along = this.point.getComponent(this.coverTangent);
       if (along < wall.min.getComponent(this.coverTangent) - .01 || along > wall.max.getComponent(this.coverTangent) + .01) continue;
       const gap = this.point.dot(this.coverNormal) - this.coverPlane;
-      clearance = Math.min(clearance, gap);
+      if (!/^(forearm|hand|fingers|fingertips|shin|foot)/.test(bone)) clearance = Math.min(clearance, gap);
       if (bone === this.coverShoulder) shoulderClearance = Math.min(shoulderClearance, gap);
     }
     if (clearance < Infinity) {
@@ -368,24 +364,13 @@ export class SoldierAnimator {
       this.root.position.addScaledVector(this.coverNormal, -Math.min(clearance - WALL_GAP, approach));
       this.root.updateMatrixWorld(true);
     }
-    // Retain separate probes for raised terrain beneath the body.
-    for (const [name, radius] of BODY_CONTACTS) {
-      this.bones.get(name).getWorldPosition(this.point);
-      const low = this.point.y - radius;
-      this.point.y = this.fallOrigin.y + .52;
-      const floor = physics.raycast(this.point, DOWN, 1.02);
-      if (floor?.normal.y > .64 && floor.point.y > .005 && floor.point.y < this.fallOrigin.y + .37) {
-        lift = Math.max(lift, floor.point.y - low);
-      }
-    }
-    this.fallLift = Math.max(lift, lerp(this.fallLift, lift, 1 - Math.exp(-dt * 19)));
-    this.root.position.y += this.fallLift;
   }
 
   tumble(physics, age, dt) {
     if (!this.fallClip) this.chooseFall(physics);
     const phase = clamp(age / this.clips.get(this.fallClip).duration, 0, 1);
     this.root.position.copy(this.fallOrigin);
+    this.root.position.y -= this.fallContact.dropFrom(this.fallOrigin.y, age);
     this.root.quaternion.setFromAxisAngle(UP, this.fallYaw + this.coverTurn * smoothstep(age, .055, .39));
     this.clip(this.fallClip, phase);
     const blend = 1 - smoothstep(age, 0, .19);
@@ -395,7 +380,13 @@ export class SoldierAnimator {
       bone.scale.lerp(scale, blend);
     }
     this.root.updateMatrixWorld(true);
-    this.supportFall(physics, age, dt);
+    this.approachCover(age);
+    if (this.fallClip === 'death_left' || this.fallClip === 'death_right') {
+      const settle = smoothstep(phase, .59, .94);
+      const side = this.fallClip === 'death_left' ? -1 : 1;
+      if (settle > 0) this.fallContact.settleSide(this.root, settle, side, this.fallYaw);
+    }
+    this.fallContact.solve(this.root, this, dt);
   }
 
   dispose() { this.mesh.skeleton.dispose(); }

@@ -426,16 +426,18 @@ test('rifle walk and run loop and keep their footfall rhythm through a speed cha
   }
 });
 
-test('soldier fall clips keep limbs apart and above the floor beside either wall', async () => {
+test('soldier falls settle on either side and clear walls and low obstacles', async () => {
   const asset = await loadSoldierAsset();
   const point = new Vector3();
   const joint = new Vector3();
 
   try {
-    for (const side of [-1, 1]) for (const besideWall of [false, true]) {
+    for (const side of [-1, 1]) for (const obstacle of ['none', 'wall', 'low', 'air']) {
+      const besideWall = obstacle === 'wall';
+      const low = side === -1 ? box([.20, 0, -.32], [.44, .22, -.10]) : box([-.44, 0, -.32], [-.20, .22, -.10]);
       const wall = side === 1 ? box([.455, 0, -1], [.625, 2.7, 1]) : box([-.625, 0, -1], [-.455, 2.7, 1]);
-      const physics = new StaticBVH(besideWall ? [wall] : []);
-      const controller = new CharacterController(physics, vector(0, 0, 0));
+      const physics = new StaticBVH(besideWall ? [wall] : obstacle === 'low' ? [low] : []);
+      const controller = new CharacterController(physics, vector(0, obstacle === 'air' ? .68 : 0, 0));
       controller.step(1 / 120, { wish: vector(0, 0, 0) });
       const bot = {
         position: controller.position, velocity: controller.velocity, height: controller.height, controller,
@@ -452,19 +454,39 @@ test('soldier fall clips keep limbs apart and above the floor beside either wall
           if (tick % 8 !== 0) continue;
           root.updateMatrixWorld(true);
           let floorGap = Infinity;
+          let propDepth = 0;
           closestWall = Infinity;
           for (let vertex = 0; vertex < mesh.geometry.attributes.position.count; vertex++) {
             mesh.getVertexPosition(vertex, point).applyMatrix4(mesh.matrixWorld);
             floorGap = Math.min(floorGap, point.y);
+            if (obstacle === 'low') {
+              propDepth = Math.max(propDepth, Math.min(
+                point.x - low.min.x, low.max.x - point.x,
+                point.y - low.min.y, low.max.y - point.y,
+                point.z - low.min.z, low.max.z - point.z,
+              ));
+            }
             if (besideWall && Math.abs(point.z) <= 1 && point.y <= 2.7) {
               closestWall = Math.min(closestWall, .455 - point.x * side);
             }
           }
           assert.ok(floorGap > -.004, `mesh intersects floor by ${-floorGap} m at tick ${tick}`);
           assert.ok(closestWall > -.004, `mesh intersects wall by ${-closestWall} m at tick ${tick}`);
+          assert.ok(propDepth < .009, `mesh intersects a low obstacle by ${propDepth} m at tick ${tick}`);
         }
         assert.equal(rig.soldier.fallClip, 'death_' + (besideWall ? 'cover_' : '') + (side === 1 ? 'right' : 'left'));
         if (besideWall) assert.ok(closestWall < .025, 'the soldier rests against the wall');
+        if (obstacle === 'none' || obstacle === 'air') {
+          let chestGap = Infinity;
+          let pelvisGap = Infinity;
+          for (const { vertex, bone } of asset.templates[0].fallSurface) {
+            if (bone !== 'chest' && bone !== 'pelvis') continue;
+            mesh.getVertexPosition(vertex, point).applyMatrix4(mesh.matrixWorld);
+            if (bone === 'chest') chestGap = Math.min(chestGap, point.y);
+            else pelvisGap = Math.min(pelvisGap, point.y);
+          }
+          assert.ok(chestGap < .065 && pelvisGap < .10, 'the torso settles rather than balancing on an arm');
+        }
         for (const arm of ['L', 'R']) {
           bones.get('hand' + arm).getWorldPosition(point);
           bones.get('forearm' + arm).getWorldPosition(joint);

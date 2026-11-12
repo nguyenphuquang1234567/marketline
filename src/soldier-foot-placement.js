@@ -1,9 +1,9 @@
 import { MathUtils, Quaternion, Vector3 } from 'three';
+import { SoldierLimbIK } from './soldier-limb-ik.js';
 
 const DOWN = new Vector3(0, -1, 0);
 const UP = new Vector3(0, 1, 0);
 const BACK = new Vector3(0, 0, 1);
-const FORWARD = new Vector3(0, 0, -1);
 const HEEL = new Vector3(0, -.129, .078);
 const TOE = new Vector3(0, -.129, -.181);
 const FOOT_PROBES = [HEEL, TOE];
@@ -25,26 +25,17 @@ export class SoldierFootPlacement {
         hasAnchor: false,
       };
     });
-    this.hip = new Vector3();
-    this.knee = new Vector3();
+    this.ik = new SoldierLimbIK();
     this.ankle = new Vector3();
     this.target = new Vector3();
-    this.kneeTarget = new Vector3();
-    this.axis = new Vector3();
-    this.authoredAxis = new Vector3();
-    this.pole = new Vector3();
     this.probe = new Vector3();
     this.leadingEdge = new Vector3();
     this.travel = new Vector3();
     this.edge = new Vector3();
     this.contactOffset = new Vector3();
     this.flatDirection = new Vector3();
-    this.from = new Vector3();
-    this.to = new Vector3();
     this.worldRotation = new Quaternion();
     this.footFrame = new Quaternion();
-    this.parentRotation = new Quaternion();
-    this.swing = new Quaternion();
     this.flatRotation = new Quaternion();
   }
 
@@ -155,50 +146,12 @@ export class SoldierFootPlacement {
         if (support) this.target.y = Math.max(this.target.y, this.supportAnkleY);
         leg.settleTime += dt;
       }
-      if (this.target.distanceToSquared(this.ankle) > .0025 ** 2) this.solve(leg, bot.yaw);
+      if (this.target.distanceToSquared(this.ankle) > .0025 ** 2) {
+        this.ik.solve(leg.thigh, leg.shin, leg.foot, this.target, this.worldRotation, bot.yaw);
+      }
       leg.foot.getWorldPosition(leg.lastPosition);
     }
     this.wasLocked = lockFeet;
     return contact;
-  }
-
-  turnBone(bone, from, to) {
-    this.swing.setFromUnitVectors(from.normalize(), to.normalize());
-    bone.getWorldQuaternion(this.parentRotation);
-    this.swing.multiply(this.parentRotation);
-    bone.parent.getWorldQuaternion(this.parentRotation).invert();
-    bone.quaternion.copy(this.parentRotation).multiply(this.swing).normalize();
-    bone.updateMatrixWorld(true);
-  }
-
-  solve({ thigh, shin, foot }, yaw) {
-    thigh.getWorldPosition(this.hip);
-    shin.getWorldPosition(this.knee);
-    const upper = this.hip.distanceTo(this.knee);
-    const lower = this.knee.distanceTo(this.ankle);
-    this.axis.subVectors(this.target, this.hip);
-    const distance = MathUtils.clamp(this.axis.length(), Math.abs(upper - lower) + .01, upper + lower - .002);
-    this.axis.normalize();
-    this.target.copy(this.hip).addScaledVector(this.axis, distance);
-    // Rotate the authored plane with the ankle target. Projecting the old knee
-    // directly against the new axis can flip it sideways when the boot rises.
-    this.authoredAxis.subVectors(this.ankle, this.hip).normalize();
-    this.pole.subVectors(this.knee, this.hip);
-    this.pole.addScaledVector(this.authoredAxis, -this.authoredAxis.dot(this.pole));
-    if (this.pole.lengthSq() < .00001) {
-      this.pole.copy(FORWARD).applyAxisAngle(UP, yaw);
-      this.pole.addScaledVector(this.authoredAxis, -this.authoredAxis.dot(this.pole));
-    }
-    this.pole.normalize().applyQuaternion(this.swing.setFromUnitVectors(this.authoredAxis, this.axis));
-    const along = (upper ** 2 - lower ** 2 + distance ** 2) / (2 * distance);
-    const across = Math.sqrt(Math.max(0, upper ** 2 - along ** 2));
-    this.kneeTarget.copy(this.hip).addScaledVector(this.axis, along).addScaledVector(this.pole, across);
-    this.turnBone(thigh, this.from.subVectors(this.knee, this.hip), this.to.subVectors(this.kneeTarget, this.hip));
-    shin.getWorldPosition(this.knee);
-    foot.getWorldPosition(this.ankle);
-    this.turnBone(shin, this.from.subVectors(this.ankle, this.knee), this.to.subVectors(this.target, this.knee));
-    foot.parent.getWorldQuaternion(this.parentRotation).invert();
-    foot.quaternion.copy(this.parentRotation).multiply(this.worldRotation).normalize();
-    foot.updateMatrixWorld(true);
   }
 }
