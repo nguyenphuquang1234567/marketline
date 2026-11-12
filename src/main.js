@@ -107,7 +107,7 @@ class Marketline {
     this.playerRig = new BotRig(corpse, 7, 0, this.soldiers.templates[0]);
     corpse.visible = false;
     this.scene.add(corpse);
-    this.effects = new Effects(this.scene, this.physics, SEED ^ 0x2718, this.audio);
+    this.effects = new Effects(this.scene, this.physics, SEED ^ 0x2718);
     this.ui.progress('Preparing squads');
     await this.paint();
     this.botSystem = new BotSystem({

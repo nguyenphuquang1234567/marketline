@@ -57,9 +57,8 @@ export function randomFor(seed) {
 }
 
 export class Effects {
-  constructor(scene, physics, seed, audio) {
+  constructor(scene, physics, seed) {
     this.physics = physics;
-    this.audio = audio;
     this.random = randomFor(seed);
     this.dot = new THREE.Object3D();
     this.vector = new THREE.Vector3();
@@ -278,7 +277,7 @@ export class Effects {
     b.mesh.visible = true;
   }
 
-  moveBody(b, dt, radius, bounce, casing) {
+  moveBody(b, dt, radius, bounce) {
     if (b.v.lengthSq() < .006 && b.hits > 0) return;
     b.v.y -= 9.81 * dt;
     this.vector.copy(b.v).multiplyScalar(dt);
@@ -293,7 +292,6 @@ export class Effects {
     if (velocity < 0) b.v.addScaledVector(hit.normal, -velocity * (1 + bounce)).multiplyScalar(.69);
     if (hit.normal.y > .65 && (b.v.lengthSq() < .3 || b.hits > 8)) b.v.set(0, 0, 0);
     b.spin *= .65;
-    if (casing && b.hits < 3 && velocity < -.32) this.audio.casing(hit.surface, b.p, -velocity);
     b.hits++;
   }
 
@@ -332,7 +330,7 @@ export class Effects {
     for (const b of this.shells) {
       if (b.life <= 0) continue;
       b.life -= dt;
-      this.moveBody(b, dt, .018, .51, true);
+      this.moveBody(b, dt, .018, .51);
     }
     for (const b of this.grenades) {
       if (b.life <= 0) continue;
@@ -344,7 +342,7 @@ export class Effects {
         onBlast(b.p, b.type);
         continue;
       }
-      this.moveBody(b, dt, .106, .38, false);
+      this.moveBody(b, dt, .106, .38);
     }
     for (const s of this.smokes) {
       if (s.life <= 0) continue;

@@ -489,17 +489,6 @@ export class SynthAudio {
     }
   }
 
-  casing(material, position, velocity = 1) {
-    const voice = this.start('impact', position, false, 0.08);
-    if (!voice) return;
-    const level = clamp(Math.abs(velocity) / 5, 0.12, 1);
-    const pitch = 0.89 + this.random() * 0.35;
-    const muted = ['fabric', 'dirt', 'sand'].includes(material) ? 0.28 : 1;
-    this.tone(voice, 2430 * pitch, 2290 * pitch, 0.14 * level * muted, 0.0006, 0.074);
-    this.tone(voice, 3880 * pitch, 3610 * pitch, 0.077 * level * muted, 0.0007, 0.043);
-    this.noise(voice, 'white', 2570, 0.85, 0.064 * level, 0.0012, 0.024);
-  }
-
   mechanical(kind) {
     const voice = this.start('weapon', undefined, false, 0.024, true);
     if (!voice) return;
