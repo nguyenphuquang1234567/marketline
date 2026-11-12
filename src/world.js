@@ -602,8 +602,10 @@ export function buildWorld(scene, seed = 56103) {
     cables.push({ mesh, phase: rand() * TAU });
   }
 
-  function facade(frame, width, depth, levels, tint, trim, doors, access, front, signage) {
+  function facade(frame, width, depth, levels, tint, trim, doors, access, front, sign) {
     const floorHeight = 3.1;
+    const signWidth = 3.81;
+    const bandOffset = 0.07;
     const wall = (u, y, w, h, c = tint) => {
       frame.box('plaster', c, u, y, depth / 2 - 0.11, w, h, 0.22);
       if (access) frame.body(u, y, depth / 2 - 0.11, w, h, 0.22);
@@ -710,13 +712,26 @@ export function buildWorld(scene, seed = 56103) {
       }
       if (edge < width / 2) wall((edge + width / 2) / 2, centerHeight(y, openingBottom, openingTop), width / 2 - edge, openingHeight);
       const band = floor === levels - 1 ? shade(tint, 1.13) : shade(tint, 0.91);
-      frame.box('plaster', band, 0, y + floorHeight - 0.07, face + 0.046, width + 0.07, 0.15, 0.23);
+      const bandY = y + floorHeight - bandOffset;
+      if (floor === 0 && sign) {
+        // Leave a gap in the ground-floor trim for the wall-mounted board.
+        const bandEdge = (width + 0.07) / 2;
+        const halfGap = signWidth / 2 + 0.07;
+        const left = sign.u - halfGap;
+        const right = sign.u + halfGap;
+        frame.box('plaster', band, (left - bandEdge) / 2, bandY, face + 0.046, left + bandEdge, 0.15, 0.23);
+        frame.box('plaster', band, (right + bandEdge) / 2, bandY, face + 0.046, bandEdge - right, 0.15, 0.23);
+      } else {
+        frame.box('plaster', band, 0, bandY, face + 0.046, width + 0.07, 0.15, 0.23);
+      }
     }
 
-    if (signage >= 0) {
-      const u = signage === 0 ? -width * 0.14 : width * 0.13;
-      frame.box('wood', 0x74614b, u, 2.84, face + 0.087, 3.81, 0.76, 0.12);
-      frame.plate('sign' + signage, 0xffffff, u, 2.84, face + 0.15, 3.71, 0.68);
+    if (sign) {
+      const signY = floorHeight - bandOffset;
+      const boardDepth = 0.12;
+      const wallFace = depth / 2;
+      frame.box('wood', 0x74614b, sign.u, signY, wallFace + boardDepth / 2, signWidth, 0.76, boardDepth);
+      frame.plate('sign' + sign.style, 0xffffff, sign.u, signY, wallFace + boardDepth + 0.003, signWidth - 0.10, 0.68);
     }
     if (front || rand() < 0.4) {
       const u = width / 2 - 0.24;
@@ -793,10 +808,13 @@ export function buildWorld(scene, seed = 56103) {
         f.box('flat', 0xdbca9f, edge + 0.45, 3.38, depth * 0.37, 0.24, 0.025, 0.25);
       }
     }
-    facade(f, width, depth, levels, tint, trim, true, access, true, options.sign ?? -1);
-    facade(rear, width, depth, levels, shade(tint, 0.94), trim, true, access && options.through, false, -1);
+    const signage = options.sign ?? -1;
+    const sign = signage >= 0 ? { style: signage, u: options.signOffset ?? width * 0.13 } : null;
+    facade(f, width, depth, levels, tint, trim, true, access, true, sign);
+    facade(rear, width, depth, levels, shade(tint, 0.94), trim, true, access && options.through, false, null);
     if (options.sign === 0 || options.sign === 1 || options.sign === 2) {
-      const anchor = f.p(-width * 0.31, 3.65, depth / 2 + 0.64);
+      const u = options.hangingSignOffset ?? -width * 0.31;
+      const anchor = f.p(u, 3.65, depth / 2 + 0.64);
       const signAngle = angle + Math.PI / 2;
       box('metal', 0x6b6250, anchor.x, anchor.y, anchor.z, 0.99, 0.382, 0.075, signAngle);
       const signFrame = local(anchor.x, anchor.z, signAngle);
@@ -804,7 +822,7 @@ export function buildWorld(scene, seed = 56103) {
       const back = local(anchor.x, anchor.z, signAngle + Math.PI);
       back.plate('sign' + options.sign, 0xffffff, 0, anchor.y, 0.042, 0.9, 0.323);
       for (const y of [anchor.y - 0.13, anchor.y + 0.13]) {
-        f.pipe(-width * 0.31, y, depth * 0.5, -width * 0.31, y, depth * 0.5 + 0.29, 0.023, 0x5c5548);
+        f.pipe(u, y, depth * 0.5, u, y, depth * 0.5 + 0.29, 0.023, 0x5c5548);
       }
     }
     if (access) {
@@ -1077,6 +1095,8 @@ export function buildWorld(scene, seed = 56103) {
     const ring = 0.98;
     const spring = 4.43;
     const depth = 2.71;
+    const mouldingDepth = 0.15;
+    const outerMoulding = depth / 2 + 0.057;
     const outer = radius + ring;
     const top = 10.39;
     const colors = [0xc5ad89, 0xc9b290, 0xd3bc99, 0xbb9f7b, 0xcdb696];
@@ -1103,8 +1123,8 @@ export function buildWorld(scene, seed = 56103) {
       const b = (i + 1) * Math.PI / 19;
       voussoir(a + 0.002, b - 0.002, radius, outer, depth, z, pick(colors));
       for (const s of [-1, 1]) {
-        voussoir(a, b, radius - 0.085, radius + 0.095, 0.15, z + s * 1.41, 0xe0caaa);
-        voussoir(a + 0.001, b - 0.001, outer - 0.13, outer + 0.09, 0.15, z + s * 1.412, 0xac9679);
+        voussoir(a, b, radius - 0.085, radius + 0.095, mouldingDepth, z + s * 1.41, 0xe0caaa);
+        voussoir(a + 0.001, b - 0.001, outer - 0.13, outer + 0.09, mouldingDepth, z + s * outerMoulding, 0xac9679);
       }
     }
     const fillShape = new THREE.Shape();
@@ -1156,8 +1176,14 @@ export function buildWorld(scene, seed = 56103) {
       box('plaster', i % 2 ? 0xb9a07e : 0xc9b28f, i * 1.137, 10.98, z, 0.67, 0.51, 2.74);
       box('plaster', 0xcebc9b, i * 1.137, 11.26, z, 0.75, 0.1, 2.83);
     }
-    box('wood', 0x776d57, 0, 9.25, z + 1.369, 3.02, 0.67, 0.125);
-    plate('sign4', 0xffffff, 0, 9.25, z + 1.445, 2.87, 0.56);
+    const signBack = outerMoulding + mouldingDepth / 2 + 0.012;
+    const boardDepth = 0.125;
+    const mountBack = depth / 2 - 0.015;
+    for (const x of [-1.02, 1.02]) {
+      box('metal', 0x6b6250, x, 9.16, z + (mountBack + signBack) / 2, 0.16, 0.16, signBack - mountBack);
+    }
+    box('wood', 0x776d57, 0, 9.25, z + signBack + boardDepth / 2, 3.02, 0.67, boardDepth);
+    plate('sign4', 0xffffff, 0, 9.25, z + signBack + boardDepth + 0.003, 2.87, 0.56);
   }
 
   // The side streets remain navigable as three loops around the central road.
@@ -1208,12 +1234,18 @@ export function buildWorld(scene, seed = 56103) {
   }
 
   const frontages = [
-    { z: 44.4, width: 17.8, left: 0xd1b78e, right: 0xb5c5c2, deep: 13.0, west: { sign: 0, lamp: true }, east: { sign: 1, lamp: true } },
-    { z: 24.2, width: 13.9, left: 0xe4c3a5, right: 0xc7b38b, deep: 14.0, west: { sign: 3, access: true }, east: { sign: 2 } },
-    { z: 5.75, width: 14.8, left: 0xcbb6a2, right: 0xe1c8a9, deep: 12.5, west: { access: true, through: true, lamp: true }, east: { sign: 5, access: true } },
+    // Offsets place the signs over bays with a clear view from the street.
+    { z: 44.4, width: 17.8, left: 0xd1b78e, right: 0xb5c5c2, deep: 13.0,
+      west: { sign: 0, signOffset: -1.42, hangingSignOffset: -1.42, lamp: true },
+      east: { sign: 1, signOffset: 2.65, hangingSignOffset: 2.25, lamp: true } },
+    { z: 24.2, width: 13.9, left: 0xe4c3a5, right: 0xc7b38b, deep: 14.0,
+      west: { sign: 3, signOffset: -3.4, access: true },
+      east: { sign: 2, signOffset: -0.28, hangingSignOffset: -2.70 } },
+    { z: 5.75, width: 14.8, left: 0xcbb6a2, right: 0xe1c8a9, deep: 12.5,
+      west: { access: true, through: true, lamp: true }, east: { sign: 5, signOffset: -0.35, access: true } },
     { z: -12.2, width: 13.5, left: 0xb0c0c1, right: 0xcd9c83, deep: 13.3, west: {}, east: { access: true, through: true, lamp: true } },
     { z: -28.2, width: 10.25, left: 0xd2ba97, right: 0xe0c3a3, deep: 13.0, west: { lamp: true }, east: {} },
-    { z: -49.2, width: 10.5, left: 0xcebda5, right: 0xa7b6af, deep: 11.5, west: {}, east: { sign: 3 } },
+    { z: -49.2, width: 10.5, left: 0xcebda5, right: 0xa7b6af, deep: 11.5, west: {}, east: { sign: 3, signOffset: -1.0 } },
   ];
   for (let i = 0; i < frontages.length; i++) {
     const f = frontages[i];
@@ -1242,7 +1274,7 @@ export function buildWorld(scene, seed = 56103) {
     [12.8, -64, 15.9, 7.2, 0, 3, 0xaeb4a6], [43, -64, 19.6, 8.1, 0, 2, 0xceaa86],
     [-45, 63.8, 17.5, 7.2, Math.PI, 2, 0xc8b391], [18.6, 63.1, 17.4, 6.2, Math.PI, 2, 0xcdb39a],
   ]) building(x, z, w, d, angle, floors, tint);
-  building(0.03, -67.35, 9.91, 7.8, 0, 2, 0xc3a88a, { sign: 2, trim: 0x71786b });
+  building(0.03, -67.35, 9.91, 7.8, 0, 2, 0xc3a88a, { sign: 2, hangingSignOffset: -1.22, trim: 0x71786b });
 
   arch(-34.8);
   const towerX = -13.8;
@@ -1285,7 +1317,7 @@ export function buildWorld(scene, seed = 56103) {
     [26.57, -17.14, Math.PI / 2, 2, 3.7, 2.72],
   ]) stall(x, z, angle, style, w, d);
 
-  awning(vector(-8.01, 3.08, 47.8), Math.PI / 2, 4.04, 1.93, 3);
+  awning(vector(-8.01, 3.08, 50), Math.PI / 2, 4.04, 1.93, 3);
   awning(vector(8.07, 3.16, 42.1), -Math.PI / 2, 4.39, 2.02, 0);
   awning(vector(8.0, 3.18, -44.83), -Math.PI / 2, 3.15, 1.87, 1);
   awning(vector(-8.1, 3.12, -46.7), Math.PI / 2, 3.4, 1.82, 2);
