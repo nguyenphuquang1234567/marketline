@@ -18,7 +18,7 @@ float streetNoise(vec3 p) {
 }
 `;
 
-function paintedSteel(material, name, corrosion, coat) {
+function paintedSteel(material, name, corrosion, coat, burnt = false) {
   material.customProgramCacheKey = () => 'marketline-steel-' + name;
   material.onBeforeCompile = shader => {
     shader.vertexShader = 'varying vec3 streetPosition;\n' + shader.vertexShader.replace(
@@ -39,14 +39,24 @@ function paintedSteel(material, name, corrosion, coat) {
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.20, .142, .088), dust * .44);
         vec3 oxide = mix(vec3(.05, .032, .023), vec3(.21, .095, .043), fleck);
         diffuseColor.rgb = mix(diffuseColor.rgb, oxide, chip * .86);
+        float scorch = 0.;
+        ${burnt ? `
+          float broad = streetNoise(p * vec3(1.9, 3.5, 2.0) + vec3(7., .3, 0.));
+          float carbon = .78 * broad + .15 * runoff + .07 * variation;
+          float plume = smoothstep(.45, .74, carbon);
+          float blister = smoothstep(.42, .58, carbon) - smoothstep(.57, .70, carbon);
+          scorch = max(plume, blister * .24);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.15, .089, .044), blister * .44);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.018, .017, .014) * (.8 + fleck * .6), plume * .92);
+        ` : ''}
       `)
       .replace('#include <roughnessmap_fragment>', /* glsl */ `
         #include <roughnessmap_fragment>
-        roughnessFactor = mix(roughnessFactor, .86, clamp(dust * .62 + wash * .13 + chip, 0., 1.));
+        roughnessFactor = mix(roughnessFactor, .86, clamp(dust * .62 + wash * .13 + chip + scorch * .74, 0., 1.));
       `)
       .replace('#include <metalnessmap_fragment>', /* glsl */ `
         #include <metalnessmap_fragment>
-        metalnessFactor *= 1. - min(.8, chip + dust * .4);
+        metalnessFactor *= 1. - min(.8, chip + dust * .4 + scorch * .5);
       `)
       .replace('#include <normal_fragment_maps>', /* glsl */ `
         #include <normal_fragment_maps>
@@ -209,6 +219,9 @@ export function createStreetMaterials(materials) {
   materials.coatedSteel = paintedSteel(new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: .52, metalness: .27,
   }), 'painted', 1.48, 0);
+  materials.burntSteel = paintedSteel(new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: .57, metalness: .22,
+  }), 'scorched', 1.35, 0, true);
   materials.cabinGlass = truckGlazing();
   materials.autoGlass.roughness = .21;
   materials.autoGlass.metalness = .56;

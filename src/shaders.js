@@ -69,6 +69,15 @@ void main() {
     clamp(log2(1.+max(0.,prev.w))/8.,0.,1.),float(prev.w>0.));
 }`;
 
+const decodeOctahedralNormal = /* glsl */ `
+vec3 decodeNormal(vec2 encoded) {
+  vec2 f = encoded * 2. - 1.;
+  vec3 n = vec3(f, 1. - abs(f.x) - abs(f.y));
+  n.xy += vec2(n.x >= 0. ? -1. : 1., n.y >= 0. ? -1. : 1.) * max(-n.z, 0.);
+  return normalize(n);
+}
+`;
+
 export const ao = /* glsl */ `
 uniform sampler2D depthNormal;
 uniform sampler2D velocity;
@@ -81,12 +90,7 @@ uniform float lowPrecision;
 uniform int taps;
 out vec4 pixel;
 float depth(vec4 v) { return lowPrecision>.5 ? exp2(clamp(v.b,0.,1.)*8.)-1. : v.b; }
-vec3 normal(vec2 v) {
-  vec2 f=v*2.-1.;
-  vec3 n=vec3(f,1.-abs(f.x)-abs(f.y));
-  n.xy += vec2(n.x>=0.?-1.:1., n.y>=0.?-1.:1.)*max(-n.z,0.);
-  return normalize(n);
-}
+${decodeOctahedralNormal}
 vec3 reconstruct(vec2 uv,float z) {
   vec4 r=inverseProjection*vec4(uv*2.-1.,1.,1.);
   return r.xyz*z/max(-r.z,.001);
@@ -94,34 +98,46 @@ vec3 reconstruct(vec2 uv,float z) {
 void main() {
   vec4 center=texture(depthNormal,uvScreen);
   float z=depth(center);
-  if(center.a<.5 || z>90.) {pixel=vec4(1.,0.,0.,1.);return;}
-  vec3 p=reconstruct(uvScreen,z), n=normal(center.rg);
-  float rotation=fract(sin(dot(floor(gl_FragCoord.xy),vec2(12.9898,78.233)))*43758.5453)*6.2831 + frame*2.39996;
-  float contribution=0.;
-  float radius=clamp(.69/z,.003,.09);
-  float aspect=texel.x/texel.y;
-  for(int i=0;i<6;i++) {
-    if (i>=taps) break;
-    float a=rotation+float(i)*6.2831/float(taps);
-    vec2 dir=vec2(cos(a)*aspect,sin(a));
-    float horizon=0.;
-    for(int k=1;k<=3;k++) {
-      vec2 sampleUV=uvScreen+dir*radius*float(k)*.43;
-      vec4 dd=texture(depthNormal,sampleUV);
-      vec3 delta=reconstruct(sampleUV,depth(dd))-p;
-      float dist=length(delta);
-      horizon=max(horizon,dd.a*max(dot(n,delta/max(dist,.001))-.075,0.)*(1.-smoothstep(.08,1.45,dist)));
-    }
-    contribution+=horizon;
+  float logDepth = log2(1. + z) / 8.;
+  if (center.a < .5 || z > 90.) {
+    pixel = vec4(1., logDepth, center.rg);
+    return;
   }
-  float value=1.-contribution/float(taps)*.9;
-  vec4 motion=texture(velocity,uvScreen);
-  vec2 prevUV=uvScreen-(motion.rg-.5)*2.;
-  vec4 old=texture(previousAO,prevUV);
-  float stable=valid*motion.a*step(length(clamp(prevUV,0.,1.)-prevUV),.001)
-    * step(abs(old.g-motion.b),.016);
-  value=mix(value,clamp(old.r,value-.16,value+.16),stable*.62);
-  pixel=vec4(value,log2(1.+z)/8.,0.,1.);
+  vec3 p = reconstruct(uvScreen, z), n = decodeNormal(center.rg);
+  float noise = fract(dot(floor(gl_FragCoord.xy), vec2(.754877666, .569840296)));
+  float rotation = noise * 6.283185 + frame * 2.399963;
+  float contribution = 0.;
+  // 0.82 m sampling radius projected using the actual camera FOV.
+  float radius = min(.12, .41 / (z * inverseProjection[1][1]));
+  float aspect = texel.x / texel.y;
+  for (int i = 0; i < 6; i++) {
+    if (i >= taps) break;
+    float a = rotation + float(i) * 6.283185 / float(taps);
+    vec2 dir = vec2(cos(a) * aspect, sin(a));
+    float horizon = 0.;
+    for (int k = 1; k <= 3; k++) {
+      // Concentrate one sample at the contact edge and use two broader probes.
+      float spread = k == 1 ? .22 : k == 2 ? .53 : 1.;
+      vec2 sampleUV = uvScreen + dir * radius * spread;
+      vec4 dd = texture(depthNormal, sampleUV);
+      vec3 delta = reconstruct(sampleUV, depth(dd)) - p;
+      float dist = length(delta);
+      float elevation = max(dot(n, delta / max(dist, .001)) - .08, 0.);
+      float proximity = .47 * (1. - smoothstep(.04, .34, dist))
+                      + .78 * (1. - smoothstep(.15, 1.05, dist));
+      horizon = max(horizon, dd.a * elevation * proximity);
+    }
+    contribution += horizon;
+  }
+  float coverage = smoothstep(1.2, 3.5, radius / texel.y);
+  float value = 1. - min(.68, contribution / float(taps) * 1.32) * coverage;
+  vec4 motion = texture(velocity, uvScreen);
+  vec2 prevUV = uvScreen - (motion.rg - .5) * 2.;
+  vec4 old = texture(previousAO, prevUV);
+  float stable = valid * motion.a * step(length(clamp(prevUV, 0., 1.) - prevUV), .001)
+    * step(abs(old.g - motion.b), .014);
+  value = mix(value, clamp(old.r, value - .115, value + .115), stable * .62);
+  pixel = vec4(value, logDepth, center.rg);
 }`;
 
 export const temporal = /* glsl */ `
@@ -134,6 +150,7 @@ uniform highp sampler2DArray mlAtlas;
 uniform mat4 mlMatrix0;
 uniform mat4 mlMatrix1;
 uniform mat4 inverseVP;
+uniform mat4 cameraWorld;
 uniform vec3 eye;
 uniform vec3 sun;
 uniform float frame;
@@ -144,6 +161,7 @@ uniform float applyAO;
 uniform float lowPrecision;
 out vec4 pixel;
 #include <packing>
+${decodeOctahedralNormal}
 vec3 yCoCg(vec3 c){return vec3(dot(c,vec3(.25,.5,.25)),.5*(c.r-c.b),.5*c.g-.25*(c.r+c.b));}
 vec3 rgb(vec3 c){return vec3(c.x+c.y-c.z,c.x+c.z,c.x-c.y-c.z);}
 float depth(vec4 v) { return lowPrecision>.5 ? exp2(clamp(v.b,0.,1.)*8.)-1. : v.b; }
@@ -167,22 +185,40 @@ void main() {
   float linZ=depth(d);
   float z=log2(1.+linZ)/8.;
   vec3 src=texture(currentColor,uvScreen).rgb;
-  if(applyAO>.5 && d.a>.5) {
-    float light=0., weights=0.;
-    for(int i=0;i<5;i++) {
-      vec2 off=i==0?vec2(0):i==1?vec2(1,0):i==2?vec2(-1,0):i==3?vec2(0,1):vec2(0,-1);
-      vec2 at=uvScreen+off*aoTexel;
-      vec2 s=texture(ao,at).rg;
-      vec3 dn=texture(depthNormal,at).rgb;
-      float weight=exp(-abs(s.y-z)*220.-length(dn.rg-d.rg)*3.2);
-      light+=s.x*weight;weights+=weight;
+  float contact = 1.;
+  if (applyAO > .5) {
+    vec4 farP = inverseVP * vec4(uvScreen * 2. - 1., 1., 1.);
+    vec3 rayPerViewDepth = farP.xyz - eye * farP.w;
+    vec3 rayDir = normalize(rayPerViewDepth);
+    if (d.a > .5) {
+      vec2 grid = uvScreen / aoTexel - .5;
+      vec2 base = (floor(grid) + .5) * aoTexel;
+      vec2 f = fract(grid);
+      float visibility = 0., weights = 0.;
+      for (int i = 0; i < 4; i++) {
+        vec2 off = vec2(float(i & 1), float(i >> 1));
+        vec4 sampleAO = texture(ao, base + off * aoTexel);
+        float spatial = mix(1. - f.x, f.x, off.x) * mix(1. - f.y, f.y, off.y);
+        float weight = spatial * exp2(-abs(sampleAO.g - z) * 275. - length(sampleAO.ba - d.rg) * 12.);
+        visibility += sampleAO.r * weight;
+        weights += weight;
+      }
+      float ambientVisibility = (visibility + .025) / (weights + .025);
+      if (ambientVisibility < .998) {
+        vec3 worldNormal = normalize(mat3(cameraWorld) * decodeNormal(d.rg));
+        float facing = max(0., dot(worldNormal, sun));
+        vec3 point = eye + rayPerViewDepth * linZ;
+        float sunlit = facing * shadowTap(point + worldNormal * .038);
+        // Estimate the fraction of lighting supplied by sky and ground bounce.
+        // Keep sunlit paint and paving from acquiring dark contact halos.
+        float ambientShare = .58 / (.58 + 2.25 * sunlit);
+        float luminance = dot(src, vec3(.2126, .7152, .0722));
+        float emissionProtection = 1. - .66 * smoothstep(.95, 1.85, luminance);
+        contact = mix(1., ambientVisibility, ambientShare * emissionProtection);
+        src *= contact;
+      }
     }
-    src*=mix(1.,(light+.02)/(weights+.02),.81);
-  }
-  if(applyAO>.5) {
-    vec4 farP = inverseVP * vec4(uvScreen*2.-1., 1., 1.);
-    vec3 rayDir = normalize(farP.xyz / farP.w - eye);
-    float marchDist = min(d.a > .5 ? linZ : 42., 38.);
+    float marchDist = min(d.a > .5 ? linZ * length(rayPerViewDepth) : 42., 38.);
     float sunAlign = max(0., dot(rayDir, sun));
     float phase = .22 + .78 * pow(sunAlign, 4.5);
     float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy + vec2(frame * 5.17, frame * 3.83), vec2(.06711056, .00583715))));
@@ -199,7 +235,7 @@ void main() {
   vec3 cur=yCoCg(src), lo=cur, hi=cur;
   for(int i=0;i<4;i++) {
     vec2 off=i==0?vec2(1,0):i==1?vec2(-1,0):i==2?vec2(0,1):vec2(0,-1);
-    vec3 sampleColor=yCoCg(texture(currentColor,uvScreen+off*texel).rgb);
+    vec3 sampleColor=yCoCg(texture(currentColor,uvScreen+off*texel).rgb * contact);
     lo=min(lo,sampleColor);hi=max(hi,sampleColor);
   }
   vec4 motion=texture(velocity,uvScreen);

@@ -355,7 +355,7 @@ export class RenderGraph {
     this.temporal = screenMaterial(S.temporal, {
       currentColor: null, history: null, depthNormal: null, velocity: null, ao: null,
       mlAtlas: null, mlMatrix0: this.shadows.matrices[0], mlMatrix1: this.shadows.matrices[1],
-      inverseVP: this.inverseVP, eye: camera.position, sun: SUN, frame: 0,
+      inverseVP: this.inverseVP, cameraWorld: camera.matrixWorld, eye: camera.position, sun: SUN, frame: 0,
       texel: this.texel, aoTexel: this.aoTexel, valid: 0, applyAO: 1, lowPrecision: this.lowPrecision,
     });
     this.bloom = screenMaterial(S.bloom, { image: null, hands: null, texel: new THREE.Vector2(), first: 1 });
@@ -419,7 +419,7 @@ export class RenderGraph {
     this.viewColor = this.makeTarget(w, h, { depth: true });
     if (this.preset.ao >= 4) this.viewColor.samples = Math.min(4, this.renderer.capabilities.maxSamples);
     this.buffers = this.makeTarget(w, h, { count: 2, nearest: true });
-    this.aoHistory = [this.makeTarget(aw, ah), this.makeTarget(aw, ah)];
+    this.aoHistory = Array.from({ length: 2 }, () => this.makeTarget(aw, ah, { nearest: true }));
     this.history = [this.makeTarget(w, h), this.makeTarget(w, h)];
     this.exposureHistory = [this.makeTarget(1, 1), this.makeTarget(1, 1)];
     this.blooms = [4, 8, 16].map(step => this.makeTarget(Math.ceil(w / step), Math.ceil(h / step)));

@@ -6,6 +6,9 @@ const PI = Math.PI;
 const clamp = THREE.MathUtils.clamp;
 const lerp = THREE.MathUtils.lerp;
 const smooth = THREE.MathUtils.smoothstep;
+const MAG_RELEASE = 0.16;
+const MAG_INSERT = 0.64;
+const BOLT_RELEASE = 0.85;
 
 function randomGenerator(seed) {
   let state = seed >>> 0;
@@ -719,9 +722,9 @@ export class WeaponView {
     if (this.reloadTime >= 0) {
       this.reloadTime += dt;
       const progress = this.reloadProgress;
-      if (reloadBefore < 0.16 && progress >= 0.16) this.events.push('release');
-      if (reloadBefore < 0.64 && progress >= 0.64) this.events.push('mag');
-      if (this.empty && reloadBefore < 0.85 && progress >= 0.85) this.events.push('bolt');
+      if (reloadBefore < MAG_RELEASE && progress >= MAG_RELEASE) this.events.push('release');
+      if (reloadBefore < MAG_INSERT && progress >= MAG_INSERT) this.events.push('mag');
+      if (this.empty && reloadBefore < BOLT_RELEASE && progress >= BOLT_RELEASE) this.events.push('bolt');
       if (this.reloadTime >= this.reloadDuration) this.reloadTime = -1;
     }
     if (this.inspectTime >= 0) {
@@ -730,7 +733,8 @@ export class WeaponView {
     }
     const aims = ads && !sprint && blocked < 0.54 && this.reloadTime < 0 && this.inspectTime < 0;
     this.ads = lerp(this.ads, aims ? 1 : 0, 1 - Math.exp(-dt * (aims ? 16 : 18)));
-    this.sprint = lerp(this.sprint, sprint && this.reloadTime < 0 ? 1 : 0, 1 - Math.exp(-dt * 12));
+    const carry = sprint && this.reloadTime < 0;
+    this.sprint = lerp(this.sprint, Number(carry), 1 - Math.exp(-dt * (carry ? 11 : 19)));
     this.step += dt * clamp(speed * 1.72, 0, 12.4);
     this.swayX = lerp(this.swayX, clamp(mouseX, -80, 80) * 0.00066, 1 - Math.exp(-dt * 18));
     this.swayY = lerp(this.swayY, clamp(mouseY, -80, 80) * 0.00054, 1 - Math.exp(-dt * 18));
@@ -748,7 +752,7 @@ export class WeaponView {
     this.bolt.position.z = Math.max(0, this.flashTimer - 0.012) * 0.72;
 
     const reload = this.reloadTime >= 0 ? this.reloadProgress : 0;
-    const drop = smooth(reload, 0, 0.22) * (1 - smooth(reload, 0.66, 1));
+    const present = smooth(reload, 0.015, 0.20) * (1 - smooth(reload, 0.68, 1));
     const magTap = Math.sin(PI * smooth(reload, 0.58, 0.72));
     const boltSnap = this.empty ? Math.sin(PI * smooth(reload, 0.80, 0.92)) : 0;
     const examine = this.inspectTime >= 0
@@ -765,34 +769,37 @@ export class WeaponView {
 
     this.root.position.set(
       lerp(0.205, 0, this.ads) + idleX + lateral * 0.012 + this.swayX * sway
-        + this.sprint * 0.047 - examine * 0.15 - drop * 0.16 + boltSnap * 0.012,
+        + this.sprint * 0.047 - examine * 0.15 - present * 0.073 + boltSnap * 0.012,
       lerp(-0.164, -SIGHT_HEIGHT, this.ads) + breath + vertical * 0.0082 + this.swayY * sway
-        - this.sprint * 0.09 - blocked * 0.078 + drop * 0.098 + magTap * 0.016 - this.landing + examine * 0.057,
+        - this.sprint * 0.149 - blocked * 0.078 - present * 0.048 + magTap * 0.016 - this.landing + examine * 0.057,
       lerp(-0.333, -0.275, this.ads) + this.recoil * 1.38 + blocked * 0.135
-        + vertical * 0.007 + (crouch ? 0.018 : 0) - drop * 0.207 - boltSnap * 0.018 - examine * 0.12,
+        + vertical * 0.007 + (crouch ? 0.018 : 0) - present * 0.152 - boltSnap * 0.018 - examine * 0.12,
     );
     this.root.rotation.set(
       this.recoil * 0.85 + vertical * 0.022 - this.swayY * sway + blocked * 0.27
-        + this.sprint * 0.43 - drop * 0.17 + magTap * 0.055 - boltSnap * 0.045 + examine * 0.07,
+        + this.sprint * 0.22 + present * 0.30 + magTap * 0.055 - boltSnap * 0.045 + examine * 0.07,
       lerp(0.105, 0, this.ads) + this.swayX * sway + this.recoil * this.recoilSide * 12
-        - this.sprint * 0.36 + drop * 0.68 - examine * 0.73,
+        - this.sprint * 0.36 + present * 0.49 - examine * 0.73,
       lerp(-0.067, 0, this.ads) - lateral * 0.028 - strideRoll * 0.012 + this.recoil * this.recoilSide * 10
-        + clamp(strafe, -1, 1) * 0.027 * sway + this.sprint * 0.25 + sprintWave * 0.12
-        - drop * 0.32 + boltSnap * 0.08 + examine * 0.43,
+        + clamp(strafe, -1, 1) * 0.027 * sway + this.sprint * 0.19 + sprintWave * 0.072
+        - present * 0.28 + boltSnap * 0.08 + examine * 0.43,
     );
 
-    const pull = smooth(reload, 0.12, 0.32);
-    const replace = smooth(reload, 0.46, 0.66);
-    const magLower = reload < 0.43 ? pull : 1 - replace;
+    // Pull straight down until the feed lips clear the well, then take the old
+    // magazine off screen. Line the fresh one up before pushing it home.
+    const withdrawal = smooth(reload, MAG_RELEASE, 0.245);
+    const replacement = smooth(reload, 0.565, MAG_INSERT);
+    const clearWell = withdrawal * (1 - replacement);
+    const exchange = smooth(reload, 0.245, 0.36) * (1 - smooth(reload, 0.45, 0.565));
     this.mag.group.position.set(
-      MAG_HOME.x - magLower * 0.049,
-      MAG_HOME.y - magLower * 0.232,
-      MAG_HOME.z + magLower * 0.061,
+      MAG_HOME.x - exchange * 0.075,
+      MAG_HOME.y - clearWell * 0.092 - exchange * 0.139,
+      MAG_HOME.z + exchange * 0.064,
     );
-    this.mag.group.rotation.set(magLower * 0.36, -magLower * 0.15, -magLower * 0.45);
-    this.mag.group.visible = reload < 0.32 || reload > 0.45;
-    this.mag.rounds.visible = reload > 0.45 && reload < 0.66;
-    const handMove = smooth(reload, 0, 0.13) * (1 - smooth(reload, 0.68, 1));
+    this.mag.group.rotation.set(exchange * 0.31, -exchange * 0.14, -exchange * 0.37);
+    this.mag.group.visible = reload < 0.34 || reload >= 0.45;
+    this.mag.rounds.visible = reload >= 0.45 && reload < MAG_INSERT;
+    const handMove = smooth(reload, 0.018, 0.15) * (1 - smooth(reload, 0.66, 0.83));
     const charge = this.empty
       ? smooth(reload, 0.73, 0.84) * (1 - smooth(reload, 0.88, 0.99))
       : 0;

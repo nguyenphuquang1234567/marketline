@@ -1,9 +1,12 @@
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createScannedMaterial, WORLD_MATERIAL_METERS } from './world-materials.js';
-import { addFacadePier, addPlasterHood, addServiceEntrance, addShopRecess, createFacadeMaterials } from './facade-details.js';
+import {
+  addAccessibleShopInterior, addDetailedShopRecess, addDoorSurround, addFacadePier, addPlasterHood,
+  addServiceEntrance, addShopRecess, addStoreCanopy, createFacadeMaterials,
+} from './facade-details.js';
 import { sandbagGeometry, sandbagSeamGeometry } from './sandbag-geometry.js';
-import { addCastIronDrain, addMarketScale, addMeterDetails, addRolledShutter, addSteelDrum, addTimberCrate, addTireTreads, streetLabel, succulentLeaf, terracottaPlanter } from './street-details.js';
+import { addCastIronDrain, addMarketScale, addMeterDetails, addRolledShutter, addSteelDrum, addTimberCrate, streetLabel, succulentLeaf, terracottaPlanter } from './street-details.js';
+import { addPickupDetails } from './pickup-details.js';
 import { createStreetMaterials } from './street-finishes.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -11,17 +14,10 @@ const TAU = Math.PI * 2;
 const BOX = new THREE.BoxGeometry();
 const PANEL = new THREE.PlaneGeometry();
 const PIPE = new THREE.CylinderGeometry(1, 1, 1, 10);
-const CAB_BEAM = new RoundedBoxGeometry(2, 1, 2, 1, 0.16);
-const STEERING_RIM = new THREE.TorusGeometry(.147, .015, 7, 20).rotateX(-.52);
 const DRUM = new THREE.CylinderGeometry(1, 1, 1, 18);
 const POT = new THREE.CylinderGeometry(1, 0.63, 1, 10);
 const ROCK = new THREE.DodecahedronGeometry(1, 0);
 const LEAF = new THREE.SphereGeometry(1, 8, 4);
-const tireGeometry = new THREE.LatheGeometry([
-  [0.209, -0.118], [0.267, -0.127], [0.336, -0.123], [0.373, -0.105],
-  [0.391, -0.069], [0.392, 0.069], [0.374, 0.106], [0.337, 0.122],
-  [0.266, 0.127], [0.209, 0.117],
-].map(([radius, width]) => new THREE.Vector2(radius, width)), 32).rotateZ(Math.PI / 2);
 const vector = (x, y, z) => new THREE.Vector3(x, y, z);
 
 function seeded(seed) {
@@ -411,7 +407,7 @@ export function buildWorld(scene, seed = 56103) {
     cables.push({ mesh, phase: rand() * TAU });
   }
 
-  function facade(frame, width, depth, levels, tint, trim, doors, access, front, sign, style) {
+  function facade(frame, width, depth, levels, tint, trim, doors, access, front, sign, style, detail = false) {
     const floorHeight = 3.1;
     const signWidth = 3.81;
     const bandOffset = 0.07;
@@ -429,8 +425,7 @@ export function buildWorld(scene, seed = 56103) {
       const secondWidth = width / 2 - doorX - doorWidth / 2;
       wall(-width / 2 + firstWidth / 2, 0.2, firstWidth, 0.4, baseTint);
       wall(width / 2 - secondWidth / 2, 0.2, secondWidth, 0.4, baseTint);
-      const visualWidth = doorWidth + 0.06;
-      frame.box('plaster', 0x89765d, doorX, 0.435, face + 0.06, visualWidth, 0.07, 0.14);
+      frame.box('limestone', 0x968874, doorX, 0.013, face - 0.10, doorWidth, 0.025, 0.28);
     } else wall(0, 0.2, width, 0.4, baseTint);
     for (let floor = 0; floor < levels; floor++) {
       const y = floor * floorHeight;
@@ -457,39 +452,52 @@ export function buildWorld(scene, seed = 56103) {
         }
         edge = u + w / 2;
         const open = isDoor && access && bay === 0;
+        const detailedDoor = detail && isDoor;
         const variant = open ? 0 : isDoor ? (bay % 3 === 0 ? 1 : 2) : Math.floor(rand() * 5);
         if (!open) {
           if (access) {
             const surface = variant === 4 ? 'glass' : variant === 2 ? 'metal' : 'wood';
             frame.body(u, center, face - 0.18, w, h, 0.2, surface);
           }
-          frame.box('flat', 0x201d19, u, center, face - 0.34, w + 0.03, h + 0.025, 0.08);
-          if (front && isDoor && variant === 2) addRolledShutter(frame, u, center, face, w, h, trim);
-          else frame.box(variant === 4 ? 'glass' : variant === 2 ? 'shutter' : 'wood',
-            variant === 4 ? 0x435b67 : variant === 2 ? trim : variant === 1 ? shade(trim, 0.54) : 0x292a26,
-            u, center, face - 0.275, w - 0.08, h - 0.06, 0.045);
-          if (variant === 1 || variant === 3) {
-            for (let k = 0; k < 4; k++) {
-              const v = u - w * 0.39 + k * w * 0.26;
-              frame.box('metal', 0x373a35, v, center, face - 0.04, 0.027, h - 0.08, 0.036);
+          if (detailedDoor) {
+            if (variant === 2) {
+              frame.box('flat', 0x201d19, u, center, face - 0.34, w + 0.03, h + 0.025, 0.08);
+              addRolledShutter(frame, u, center, face, w, h, trim);
             }
-            for (const k of [-0.32, 0.32]) frame.box('metal', 0x393b35, u, center + h * k, face - 0.041, w, 0.029, 0.042);
-            if (isDoor) frame.box('metal', 0x9f9479, u + w * 0.31, center - 0.19, face - 0.005, 0.1, 0.048, 0.052);
-          } else if (variant === 4) {
-            frame.box('wood', 0x716756, u, center, face - 0.21, 0.045, h, 0.045);
-            frame.box('wood', 0x716756, u, center + 0.21, face - 0.21, w, 0.045, 0.045);
-            frame.box('flat', 0xb2a288, u + w * 0.29, center - h * 0.08, face - 0.237, w * 0.3, h * 0.81, 0.012);
-          } else if (variant === 0) {
-            frame.box('wood', trim, u - w * 0.37, center, face + 0.012, w * 0.21, h * 0.91, 0.043, -0.2);
-            frame.box('wood', shade(trim, 0.78), u + w * 0.51, center, face + 0.034, w * 0.32, h * 0.92, 0.043, 0.6);
+            addDetailedShopRecess(frame, u, center, face, w, h, variant, trim, style);
+          } else {
+            frame.box('flat', 0x201d19, u, center, face - 0.34, w + 0.03, h + 0.025, 0.08);
+            if (front && isDoor && variant === 2) addRolledShutter(frame, u, center, face, w, h, trim);
+            else frame.box(variant === 4 ? 'glass' : variant === 2 ? 'shutter' : 'wood',
+              variant === 4 ? 0x435b67 : variant === 2 ? trim : variant === 1 ? shade(trim, 0.54) : 0x292a26,
+              u, center, face - 0.275, w - 0.08, h - 0.06, 0.045);
+            if (variant === 1 || variant === 3) {
+              for (let k = 0; k < 4; k++) {
+                const v = u - w * 0.39 + k * w * 0.26;
+                frame.box('metal', 0x373a35, v, center, face - 0.04, 0.027, h - 0.08, 0.036);
+              }
+              for (const k of [-0.32, 0.32]) frame.box('metal', 0x393b35, u, center + h * k, face - 0.041, w, 0.029, 0.042);
+              if (isDoor) frame.box('metal', 0x9f9479, u + w * 0.31, center - 0.19, face - 0.005, 0.1, 0.048, 0.052);
+            } else if (variant === 4) {
+              frame.box('wood', 0x716756, u, center, face - 0.21, 0.045, h, 0.045);
+              frame.box('wood', 0x716756, u, center + 0.21, face - 0.21, w, 0.045, 0.045);
+              frame.box('flat', 0xb2a288, u + w * 0.29, center - h * 0.08, face - 0.237, w * 0.3, h * 0.81, 0.012);
+            } else if (variant === 0) {
+              frame.box('wood', trim, u - w * 0.37, center, face + 0.012, w * 0.21, h * 0.91, 0.043, -0.2);
+              frame.box('wood', shade(trim, 0.78), u + w * 0.51, center, face + 0.034, w * 0.32, h * 0.92, 0.043, 0.6);
+            }
+            if (front && isDoor) addShopRecess(frame, u, center, face, w, h, variant, trim);
           }
-          if (front && isDoor) addShopRecess(frame, u, center, face, w, h, variant, trim);
         }
         const casing = shade(tint, rand() > 0.3 ? 0.88 : 1.17);
-        frame.box('plaster', casing, u, center + h / 2, face + 0.02, w + 0.22, 0.13, 0.18);
-        frame.box('plaster', casing, u - w / 2, center, face + 0.027, 0.12, h, 0.19);
-        frame.box('plaster', casing, u + w / 2, center, face + 0.027, 0.12, h, 0.19);
-        if (!open) frame.box('plaster', shade(tint, 1.1), u, center - h / 2, face + 0.083, w + 0.24, 0.125, 0.34);
+        if (detailedDoor) {
+          addDoorSurround(frame, u, face, w, openingBottom, openingTop, casing, style, open);
+        } else {
+          frame.box('plaster', casing, u, center + h / 2, face + 0.02, w + 0.22, 0.13, 0.18);
+          frame.box('plaster', casing, u - w / 2, center, face + 0.027, 0.12, h, 0.19);
+          frame.box('plaster', casing, u + w / 2, center, face + 0.027, 0.12, h, 0.19);
+          if (!open) frame.box('plaster', shade(tint, 1.1), u, center - h / 2, face + 0.083, w + 0.24, 0.125, 0.34);
+        }
         if (front && floor > 0 && !balcony && style === 'carved') {
           addPlasterHood(frame, u, center + h / 2, face, w, casing);
         }
@@ -637,8 +645,12 @@ export function buildWorld(scene, seed = 56103) {
     const signage = options.sign ?? -1;
     const sign = signage >= 0 ? { style: signage, u: options.signOffset ?? width * 0.13 } : null;
     const style = options.style ?? (Math.round(Math.abs(x * 0.27 + z * 0.42)) % 3 === 0 ? 'carved' : 'render');
-    facade(f, width, depth, levels, tint, trim, true, access, true, sign, style);
+    facade(f, width, depth, levels, tint, trim, true, access, true, sign, style, options.streetFront);
     facade(rear, width, depth, levels, shade(tint, 0.94), trim, true, access && options.through, false, null, 'service');
+    if (options.canopy) {
+      const { center, span, projection, finish } = options.canopy;
+      addStoreCanopy(f, width * center, depth / 2 + 0.012, Math.min(span, width - 1.2), projection, finish);
+    }
     if (options.streetFront) {
       placeAsset('ShopLantern', f.p(-width / 2 + 0.48, 3.71, depth / 2 + 0.006), angle);
     }
@@ -669,6 +681,7 @@ export function buildWorld(scene, seed = 56103) {
       f.box('wood', 0x8e7452, -width / 2 + 0.82, 0.84, -depth * 0.23, 1.21, 0.13, 2.2);
       f.box('wood', 0x765f43, -width / 2 + 0.82, 0.39, -depth * 0.23, 1.18, 0.77, 2.18);
       f.body(-width / 2 + 0.82, 0.42, -depth * 0.23, 1.18, 0.84, 2.18, 'wood');
+      if (options.streetFront) addAccessibleShopInterior(f, width, depth, style, options.through);
     }
     f.box('plaster', roof, 0, top, 0, width + 0.25, 0.21, depth + 0.25);
     if (access) f.body(0, top, 0, width, 0.21, depth);
@@ -902,164 +915,7 @@ export function buildWorld(scene, seed = 56103) {
 
   function pickup(x, z, angle, color, index) {
     const f = local(x, z, angle);
-    const paint = shade(color, 0.88);
-    const bright = shade(color, 1.12);
-    const rubber = 0x353632;
-    const seal = 0x3b3b35;
-    const glass = 0x4d5a59;
-    const axles = [-1.37, 1.33];
-    const wheelY = 0.392;
-    const rounded = (material, tint, u, y, v, w, h, d, radius) => {
-      const geometry = new RoundedBoxGeometry(w, h, d, 2, radius);
-      const point = f.p(u, y, v);
-      batches.add(geometry, material, tint, point.x, point.y, point.z, 1, 1, 1, angle);
-      geometry.dispose();
-    };
-    const sheet = (material, tint, corners) => {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(corners.flat(), 3));
-      geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
-      geometry.setIndex([0, 1, 2, 0, 2, 3]);
-      geometry.computeVertexNormals();
-      batches.add(geometry, material, tint, x, 0, z, 1, 1, 1, angle);
-      geometry.dispose();
-    };
-
-    // Narrow inner chassis leaves room for recessed tire wells in the outer panels.
-    rounded('rubber', 0x4c4b43, 0, 0.52, 0.02, 1.21, 0.28, 4.30, 0.045);
-    rounded('enamel', paint, 0, .91, .81, 1.66, .30, 2.71, .068);
-    rounded('coatedSteel', paint, 0, .816, -1.34, 1.66, .126, 1.62, .036);
-    rounded('enamel', bright, 0, 1.125, 1.53, 1.69, 0.18, 1.34, 0.074);
-    rounded('enamel', paint, 0, 1.007, -2.13, 1.76, .335, .14, .036);
-    rounded('coatedSteel', paint, 0, .833, -2.192, .361, .129, .038, .016);
-    rounded('rubber', seal, 0, 1.09, -2.203, .173, .053, .016, .007);
-    f.box('coatedSteel', bright, 0, 1.09, -2.215, .135, .019, .01);
-    rounded('coatedSteel', 0x5c5c53, 0, 0.682, -2.205, 1.87, 0.137, 0.19, 0.048);
-    rounded('coatedSteel', 0x66675d, 0, 0.691, 2.205, 1.94, 0.16, 0.21, 0.048);
-    rounded('rubber', seal, 0, 0.989, 2.185, 1.17, 0.232, 0.082, 0.028);
-    for (let row = 0; row < 5; row++) {
-      f.box('metal', 0x74766b, 0, 0.913 + row * 0.039, 2.23, 1.105, 0.014, 0.028);
-    }
-    f.box('metal', 0x8d8a80, 0, 0.989, 2.247, 0.13, 0.066, 0.012);
-    f.box('flat', 0xc2b899, 0.06, 0.69, 2.321, 0.316, 0.104, 0.013);
-    f.box('flat', 0xc2b899, 0.08, 0.83, -2.217, 0.316, 0.104, 0.013);
-    streetLabel(f, 'plate' + index, .06, .69, 2.329, .307, .095);
-    streetLabel(f, 'plate' + index, .08, .83, -2.225, .307, .095, Math.PI);
-    for (const offset of [-.136, .136]) {
-      f.box('metal', 0x737067, .06 + offset, .726, 2.331, .01, .01, .004);
-      f.box('metal', 0x737067, .08 + offset, .866, -2.227, .01, .01, .004);
-    }
-    for (const side of [-1, 1]) {
-      rounded('rubber', 0x3a3b35, side * 0.719, 1.018, 2.176, .325, .196, .108, .027);
-      rounded('metal', 0x999484, side * 0.719, 1.018, 2.202, .301, .171, .075, .023);
-      rounded('autoGlass', 0xaca799, side * 0.719, 1.018, 2.236, .274, .145, .024, .010);
-      for (let flute = -5; flute <= 5; flute++) {
-        f.box('autoGlass', 0xb6b1a1, side * .719 + flute * .021, 1.018, 2.25, .004, .118, .006);
-      }
-      f.box('enamel', 0xb37e39, side * .844, .949, 2.231, .048, .035, .029);
-      rounded('enamel', 0x9d4a30, side * 0.838, 0.949, -2.157, 0.122, 0.225, 0.099, 0.019);
-      f.box('flat', 0xb6a37b, side * 0.839, 0.981, -2.211, 0.082, 0.041, 0.01);
-      f.box('flat', 0xb68b4c, side * 0.911, 1.018, 1.988, 0.015, 0.037, 0.113);
-    }
-
-    const fender = new THREE.Shape();
-    fender.moveTo(-2.16, 0.49);
-    for (const axle of axles) {
-      for (let step = 0; step <= 12; step++) {
-        const arc = Math.PI - 0.225 - (Math.PI - 0.45) * step / 12;
-        fender.lineTo(axle + Math.cos(arc) * 0.432, wheelY + Math.sin(arc) * 0.432);
-      }
-    }
-    fender.lineTo(2.12, 0.49);
-    fender.lineTo(2.15, 1.116);
-    fender.lineTo(1.86, 1.16);
-    fender.lineTo(1.07, 1.185);
-    fender.lineTo(-0.3, 1.245);
-    fender.lineTo(-0.48, 1.109);
-    fender.lineTo(-2.15, 1.109);
-    fender.closePath();
-    const bodyPanel = new THREE.ExtrudeGeometry(fender, {
-      depth: 0.09, steps: 1, bevelEnabled: true, bevelSize: 0.025, bevelThickness: 0.021, bevelSegments: 2,
-    });
-    bodyPanel.translate(0, 0, -0.045).rotateY(-Math.PI / 2);
-
-    // The roof, A-pillars and sloping glazing form one cab rather than a box on the hood.
-    rounded('enamel', bright, 0, 1.854, 0.274, 1.596, 0.131, 1.253, 0.061);
-    const windshield = [[-.728, 1.273, 1.041], [.728, 1.273, 1.041], [.691, 1.778, .86], [-.691, 1.778, .86]];
-    sheet('cabinGlass', glass, windshield);
-    f.pipe(-.766, 1.264, 1.043, .766, 1.264, 1.043, .021, seal, 'rubber', CAB_BEAM);
-    f.pipe(-.738, 1.783, .855, .738, 1.783, .855, .022, seal, 'rubber', CAB_BEAM);
-
-    sheet('cabinGlass', glass, [[.722, 1.275, -.398], [-.722, 1.275, -.398], [-.695, 1.787, -.344], [.695, 1.787, -.344]]);
-    rounded('enamel', paint, 0, 1.179, -.418, 1.56, .171, .115, .035);
-    f.pipe(-.75, 1.779, -.344, .75, 1.779, -.344, .023, seal, 'rubber', CAB_BEAM);
-
-    // The tinted glazing exposes the dashboard, seats, and wheel from either side.
-    rounded('rubber', 0x45433b, 0, 1.252, .863, 1.52, .118, .324, .043);
-    rounded('rubber', 0x383a35, .402, 1.338, .772, .433, .083, .23, .036);
-    rounded('rubber', 0x464439, 0, 1.009, .282, 1.5, .098, 1.38, .039);
-    f.pipe(.408, 1.267, .766, .408, 1.405, .593, .029, 0x3d3e38, 'rubber');
-    f.mesh(STEERING_RIM, 'rubber', 0x2a2e29, .408, 1.405, .593);
-    f.box('rubber', 0x46463e, .408, 1.401, .596, .24, .043, .028);
-    for (const side of [-1, 1]) {
-      rounded('cloth', 0x736b58, side * .421, 1.152, .167, .477, .119, .45, .053);
-      rounded('cloth', 0x655e4d, side * .421, 1.402, -.065, .453, .464, .125, .059);
-      rounded('cloth', 0x5e5848, side * .421, 1.683, -.078, .208, .112, .108, .044);
-      f.box('rubber', 0x48473e, side * .732, 1.145, .275, .105, .219, 1.287);
-    }
-    f.box('rubber', 0x555247, 0, 1.167, .316, .195, .241, .633);
-    f.pipe(0, 1.25, .435, 0, 1.397, .447, .012, 0x626158);
-    rounded('rubber', 0x42433b, 0, 1.397, .447, .062, .049, .055, .02);
-    for (const [u, end] of [[-0.71, -0.14], [0.05, 0.67]]) {
-      f.pipe(u, 1.288, 1.048, end, 1.332, 1.032, 0.013, 0x363733, 'rubber');
-    }
-    rounded('coatedSteel', 0x4f5149, 0, .908, -1.336, 1.594, .065, 1.55, .021);
-    for (let slat = -6; slat <= 6; slat++) {
-      f.box('coatedSteel', 0x626358, slat * .119, .948, -1.34, .032, .017, 1.47);
-    }
-
-    for (const side of [-1, 1]) {
-      const panel = f.p(side * 0.836, 0, 0);
-      batches.add(bodyPanel, 'enamel', paint, panel.x, panel.y, panel.z, 1, 1, 1, angle);
-      rounded('enamel', bright, side * 0.851, 1.122, -1.36, 0.134, 0.071, 1.53, 0.033);
-      rounded('coatedSteel', paint, side * .735, .991, -1.37, .197, .163, .671, .038);
-      f.box('rubber', seal, side * 0.905, 0.791, 0.342, 0.018, 0.018, 1.316);
-      f.box('rubber', seal, side * 0.905, 1.008, -0.331, 0.016, 0.42, 0.017);
-      f.box('rubber', seal, side * 0.905, 1.001, .988, .014, .412, .011);
-      f.box('rubber', 0x514d43, side * .912, 1.143, -.117, .019, .062, .185);
-      rounded('coatedSteel', shade(color, .79), side * .931, 1.148, -.117, .032, .039, .154, .012);
-      streetLabel(f, 'delivery', side * .906, 1.013, .376, .48, .214, side * Math.PI / 2);
-      f.box('rubber', seal, side * .906, .691, .144, .018, .037, .929);
-      f.box('metal', 0x767468, side * .913, .692, .144, .012, .010, .89);
-      f.box('coatedSteel', paint, side * .907, .982, -1.508, .012, .163, .167);
-      f.box('rubber', seal, side * .914, .981, -1.448, .006, .028, .035);
-      f.pipe(side * .788, 1.234, 1.044, side * .744, 1.818, .838, .045, color, 'enamel', CAB_BEAM);
-      f.pipe(side * .788, 1.234, -.419, side * .744, 1.818, -.337, .057, color, 'enamel', CAB_BEAM);
-      f.pipe(side * .808, 1.251, -.396, side * .812, 1.251, 1.014, .023, seal, 'rubber', CAB_BEAM);
-      f.pipe(side * .77, 1.781, -.33, side * .773, 1.781, .83, .026, seal, 'rubber', CAB_BEAM);
-      sheet('cabinGlass', glass, [[side * .821, 1.266, -.389], [side * .826, 1.266, 1.005],
-        [side * .766, 1.78, .816], [side * .766, 1.78, -.338]]);
-      f.pipe(side * .823, 1.264, -.188, side * .769, 1.783, -.188, .021, seal, 'rubber', CAB_BEAM);
-      f.pipe(side * .824, 1.269, .646, side * .769, 1.783, .646, .014, seal, 'rubber', CAB_BEAM);
-      f.pipe(side * 0.852, 1.37, 0.791, side * 1.027, 1.418, 0.824, 0.028, seal, 'rubber');
-      rounded('enamel', bright, side * 1.046, 1.442, 0.825, 0.193, 0.123, 0.125, 0.037);
-      f.box('autoGlass', 0x737871, side * 1.047, 1.449, 0.758, 0.146, 0.074, 0.015);
-      for (const axle of axles) {
-        const p = f.p(side * 0.886, wheelY, axle);
-        round(tireGeometry, 'rubber', rubber, p.x, p.y, p.z, 1, 1, 1, angle);
-        addTireTreads(f, side * .886, wheelY, axle);
-        f.pipe(side * 0.777, wheelY, axle, side * 1.005, wheelY, axle, 0.227, 0x77756d, 'metal', DRUM);
-        f.pipe(side * 1.003, wheelY, axle, side * 1.017, wheelY, axle, 0.182, 0x4c4e47, 'metal', DRUM);
-        f.pipe(side * 1.01, wheelY, axle, side * 1.031, wheelY, axle, 0.082, 0x77786e, 'metal', DRUM);
-        for (let lug = 0; lug < 6; lug++) {
-          const a = lug * TAU / 6;
-          const yy = wheelY + Math.sin(a) * 0.127;
-          const zz = axle + Math.cos(a) * 0.127;
-          f.pipe(side * 1.013, yy, zz, side * 1.023, yy, zz, 0.018, 0x9a978b);
-        }
-      }
-    }
-    bodyPanel.dispose();
+    addPickupDetails(f, shade, color, index);
     f.body(0, 0.63, 0, 1.86, 1.26, 4.39, 'metal');
     f.body(0, 1.55, 0.34, 1.73, 0.64, 1.39, 'metal');
   }
@@ -1205,15 +1061,19 @@ export function buildWorld(scene, seed = 56103) {
   const frontages = [
     // Offsets place the signs over bays with a clear view from the street.
     { z: 44.4, width: 17.8, left: 0xd1b78e, right: 0xb5c5c2, deep: 13.0,
-      west: { sign: 0, signOffset: -1.42, hangingSignOffset: -1.42, lamp: true, style: 'tiled' },
+      west: { sign: 0, signOffset: -1.42, hangingSignOffset: -1.42, lamp: true, style: 'tiled',
+        canopy: { center: 0.3, span: 5.7, projection: 1.39, finish: 'wood' } },
       east: { sign: 1, signOffset: 2.65, hangingSignOffset: 2.25, lamp: true, style: 'tiled' } },
     { z: 24.2, width: 13.9, left: 0xe4c3a5, right: 0xc7b38b, deep: 14.0,
       west: { sign: 3, signOffset: -3.4, access: true, style: 'carved' },
       east: { sign: 2, signOffset: -0.28, hangingSignOffset: -2.70, style: 'workshop' } },
     { z: 5.75, width: 14.8, left: 0xcbb6a2, right: 0xe1c8a9, deep: 12.5,
-      west: { access: true, through: true, lamp: true, style: 'workshop' }, east: { sign: 5, signOffset: -0.35, access: true, style: 'tiled' } },
+      west: { access: true, through: true, lamp: true, style: 'workshop',
+        canopy: { center: -0.24, span: 5.45, projection: 1.42, finish: 'stone' } },
+      east: { sign: 5, signOffset: -0.35, access: true, style: 'tiled' } },
     { z: -12.2, width: 13.5, left: 0xb0c0c1, right: 0xcd9c83, deep: 13.3, west: {}, east: { access: true, through: true, lamp: true } },
-    { z: -28.2, width: 10.25, left: 0xd2ba97, right: 0xe0c3a3, deep: 13.0, west: { lamp: true }, east: {} },
+    { z: -28.2, width: 10.25, left: 0xd2ba97, right: 0xe0c3a3, deep: 13.0, west: { lamp: true },
+      east: { canopy: { center: 0.07, span: 5.3, projection: 1.28, finish: 'wood' } } },
     { z: -49.2, width: 10.5, left: 0xcebda5, right: 0xa7b6af, deep: 11.5, west: {}, east: { sign: 3, signOffset: -1.0 } },
   ];
   for (let i = 0; i < frontages.length; i++) {
