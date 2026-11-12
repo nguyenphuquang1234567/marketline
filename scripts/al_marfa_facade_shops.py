@@ -215,6 +215,25 @@ class Shop:
                   (u, d + .054, h + .066), (u, d + .023, h + .087)]
         self.pipe(batch, points, .009 if industrial else .008, finish, 9)
 
+    def door_panel(self, u, d, h, width, height):
+        # Route the moulded lip into one solid panel. Stacking thin plates
+        # here leaves overlapping back faces in the real-time shadow atlas.
+        rings = ((-.041, .004), (-.035, 0.), (.011, 0.),
+                 (.016, .010), (.032, .024), (.037, .031))
+        verts = []
+        for depth, inset in rings:
+            w = width / 2 - inset
+            z = height / 2 - inset
+            verts.extend((u + x, -(d + depth), h + y)
+                         for x, y in ((-w, -z), (w, -z), (w, z), (-w, z)))
+        faces = [(3, 2, 1, 0)]
+        for i in range(0, len(verts) - 4, 4):
+            for j in range(4):
+                a, b = i + j, i + (j + 1) % 4
+                faces.append((a, b, b + 4, a + 4))
+        faces.append(tuple(range(len(verts) - 4, len(verts))))
+        self.panels.append(verts, faces, self.mats[self.wood])
+
     def roll_down(self, opening, wide=False):
         u, width, bottom, top = (opening[k] for k in ("u", "w", "bottom", "top"))
         batch = self.panels
@@ -314,8 +333,7 @@ class Shop:
                            .074, .089, h - .062, self.wood, .007)
             for level in (bottom + .062, panel_top, pane_top, top - .072):
                 self.block(batch, x, d + .005, level, leaf_width - .039, .087, .076, self.wood, .007)
-            self.block(batch, x, d - .012, bottom + .311, leaf_width - .126, .061, .433, self.wood, .011)
-            self.block(batch, x, d + .023, bottom + .310, leaf_width - .170, .020, .348, self.wood, .018)
+            self.door_panel(x, d, bottom + .311, leaf_width - .126, .433)
             for height in (bottom + .26, top - .272):
                 hinge = x + side * (leaf_width / 2 - .032)
                 self.block(batch, hinge, d + .056, height, .061, .023, .057, "iron", .004)
