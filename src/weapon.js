@@ -25,9 +25,9 @@ function grainTexture(random) {
     for (let x = 0; x < size; x++) {
       const pixel = (y * size + x) * 4;
       const grain = random();
-      data[pixel] = 215 + grain * 40;
-      data[pixel + 1] = 165 + grain * 90;
-      data[pixel + 2] = 220 + grain * 35;
+      data[pixel] = 162 + grain * 87;
+      data[pixel + 1] = 191 + grain * 58;
+      data[pixel + 2] = 128 + grain * 121;
       data[pixel + 3] = 255;
     }
   }
@@ -37,6 +37,7 @@ function grainTexture(random) {
     for (let j = 0, length = 1 + random() * 20; j < length; j++) {
       const pixel = (y * size + ((x + j) % size)) * 4;
       data[pixel + 1] = 75 + random() * 95;
+      data[pixel] = 105 + data[pixel + 1] * 0.31;
     }
   }
   const texture = new THREE.DataTexture(data, size, size);
@@ -44,25 +45,26 @@ function grainTexture(random) {
   texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.generateMipmaps = true;
+  texture.anisotropy = 8;
   texture.needsUpdate = true;
   return texture;
 }
 
 function materials(texture) {
-  const make = (color, roughness, metalness, bumpScale = 0.0022, detail = texture) =>
+  const make = (color, roughness, metalness, bumpScale = 0.0022) =>
     new THREE.MeshStandardMaterial({
       color,
       roughness,
       metalness,
-      roughnessMap: detail,
-      bumpMap: detail,
+      roughnessMap: texture,
+      bumpMap: texture,
       bumpScale,
     });
   return {
-    body: make(0x56605f, 0.58, 0.36, 0.0020),
-    trim: make(0x323a3c, 0.70, 0.34, 0.0022),
-    edge: make(0x727c7a, 0.44, 0.58, 0.0016),
-    steel: make(0x919c9d, 0.36, 0.68, 0.0014),
+    body: addCoating(make(0x454640, 0.64, 0.28, 0.00065), 0.85),
+    trim: addCoating(make(0x343831, 0.70, 0.23, 0.00075), 0.52),
+    edge: addCoating(make(0x585850, 0.54, 0.56, 0.00055), 1.0),
+    steel: addCoating(make(0x797d78, 0.45, 0.75, 0.00045), 0.62),
     dark: make(0x141c20, 0.72, 0.16, 0.0018),
     polymer: make(0x333c3a, 0.88, 0.06, 0.0032),
     pad: make(0x1f2629, 0.92, 0.02, 0.0035),
@@ -77,6 +79,38 @@ function materials(texture) {
     leather: make(0x2c2f2c, 0.80, 0.04, 0.0038),
     stitch: make(0x96957e, 0.96, 0, 0.0020),
   };
+}
+
+function addCoating(material, wear) {
+  material.customProgramCacheKey = () => 'carbine-coating';
+  material.onBeforeCompile = shader => {
+    shader.uniforms.coatingWear = { value: wear };
+    const coordinates = /* glsl */ `
+      varying vec3 receiverPosition;
+      varying float receiverChamfer;
+    `;
+    shader.vertexShader = coordinates + shader.vertexShader.replace('#include <project_vertex>', /* glsl */ `
+      #include <project_vertex>
+      receiverPosition = transformed;
+      vec3 axis = abs(normal);
+      receiverChamfer = 1. - smoothstep(.80, .99, max(max(axis.x, axis.y), axis.z));
+    `);
+    shader.fragmentShader = coordinates + /* glsl */ `
+      uniform float coatingWear;
+    ` + shader.fragmentShader.replace('#include <metalnessmap_fragment>', /* glsl */ `
+      #include <metalnessmap_fragment>
+      vec2 steelUV = vec2(receiverPosition.z, receiverPosition.y + receiverPosition.x * .62);
+      vec3 scuff = texture2D(roughnessMap, steelUV * vec2(5., 13.)).rgb;
+      vec3 handling = texture2D(roughnessMap, steelUV * vec2(1.9, 4.7) + vec2(.39, .27)).rgb;
+      float wear = coatingWear * clamp(.58 * receiverChamfer * smoothstep(.49, .85, scuff.b)
+        + .26 * (1. - smoothstep(.35, .63, scuff.g)), 0., 1.);
+      diffuseColor.rgb *= mix(.86, 1.09, smoothstep(.31, .9, handling.b));
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.23, .23, .21), wear);
+      roughnessFactor = mix(roughnessFactor, .34, wear);
+      metalnessFactor = mix(metalnessFactor, .81, wear);
+    `);
+  };
+  return material;
 }
 
 function bevel(width, height, depth, radius) {

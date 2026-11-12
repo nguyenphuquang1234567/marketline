@@ -1,13 +1,15 @@
 import * as THREE from 'three';
 import * as S from './shaders.js';
 import { MARKET_SUN as SUN } from './market-sky.js';
+import { roadReflection } from './road-reflection.js';
+import { SkyOcclusion, skyOcclusionGLSL } from './sky-occlusion.js';
 
 const CASCADE_DISTANCES = [19, 47, 89, 162];
 const PRESETS = {
   Low:    { scale: .67, floor: .5,  shadows: 512,  cascades: 2, ao: 0, bloom: 0,   density: .45 },
   Medium: { scale: .79, floor: .58, shadows: 768,  cascades: 3, ao: 3, bloom: .7,  density: .7 },
-  High:   { scale: .9,  floor: .63, shadows: 1024, cascades: 4, ao: 4, bloom: .86, density: 1 },
-  Ultra:  { scale: 1,   floor: .73, shadows: 1536, cascades: 4, ao: 6, bloom: 1,   density: 1 },
+  High:   { scale: .9,  floor: .63, shadows: 1024, cascades: 4, ao: 4, bloom: .86, density: 1, reflections: 14 },
+  Ultra:  { scale: 1,   floor: .73, shadows: 1536, cascades: 4, ao: 6, bloom: 1,   density: 1, reflections: 20 },
 };
 
 const shadowVertex = /* glsl */ `
@@ -130,7 +132,7 @@ function lutTexture() {
 }
 
 class SunShadows {
-  constructor(renderer) {
+  constructor(renderer, roofHeight) {
     this.renderer = renderer;
     this.cameras = CASCADE_DISTANCES.map((_, index) => {
       const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, .5, 320);
@@ -142,7 +144,7 @@ class SunShadows {
     this.material = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
     this.uniforms = {
       mlAtlas: { value: null }, mlMatrix: { value: this.matrices }, mlCount: { value: 4 },
-      mlTexel: { value: 1 / 1024 }, mlSun: { value: SUN },
+      mlTexel: { value: 1 / 1024 }, mlSun: { value: SUN }, mlRoofHeight: { value: roofHeight },
     };
     this.targets = new Set();
     this.center = new THREE.Vector3();
@@ -179,7 +181,7 @@ class SunShadows {
           before(shader, renderer);
           Object.assign(shader.uniforms, this.uniforms);
           shader.vertexShader = shadowVertex + shader.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n' + shadowCoords);
-          shader.fragmentShader = shader.fragmentShader.replace('#include <packing>', '#include <packing>\n' + shadowFragment)
+          shader.fragmentShader = shader.fragmentShader.replace('#include <packing>', '#include <packing>\n' + shadowFragment + skyOcclusionGLSL)
             .replace('#include <color_fragment>', `#include <color_fragment>
               {
                 float macroA = mlNoise(mlWorld.xz * .13 + vec2(mlWorld.y * .19, -mlWorld.y * .14));
@@ -192,7 +194,12 @@ class SunShadows {
             .replace('#include <lights_fragment_begin>', THREE.ShaderChunk.lights_fragment_begin.replace(
               'getDirectionalLightInfo( directionalLight, directLight );',
               'getDirectionalLightInfo( directionalLight, directLight );\n directLight.color *= mlShadow(mlWorld, normalize(mlWorldNormal));',
-            ));
+            ))
+            .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+              float roof = mlSkyOcclusion(mlWorld, normalize(mlWorldNormal));
+              reflectedLight.indirectDiffuse *= mix(vec3(1.), vec3(.43, .46, .48), roof);
+              reflectedLight.indirectSpecular *= mix(1., .24, roof);
+            `);
         };
         material.customProgramCacheKey = () => oldKey + ':marketline-sun-array';
         material.needsUpdate = true;
@@ -290,7 +297,10 @@ export class RenderGraph {
     this.debug = 0;
     this.timing = { calls: 0, triangles: 0, scale: 1 };
     this.grade = lutTexture();
-    this.shadows = new SunShadows(this.renderer);
+    this.emptyHands = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+    this.emptyHands.needsUpdate = true;
+    this.skyOcclusion = new SkyOcclusion(this.renderer);
+    this.shadows = new SunShadows(this.renderer, this.skyOcclusion.target.texture);
     this.skyPhoto = skyPhoto;
     if (this.hdr) {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -308,6 +318,17 @@ export class RenderGraph {
     this.skyLight = new THREE.HemisphereLight(0xbfd8fc, 0xb6a085, this.hdr ? 0.79 : 1.28);
     scene.fog = new THREE.FogExp2(0xbfc5c5, .0049);
     scene.add(this.sun, this.skyLight);
+    // The bounded practical lights share the pendant positions in shop-interiors.js.
+    for (const [x, y, z, color, intensity, range] of [
+      [-11.5, 2.42, 29.1, 0xffd294, 10.5, 3.25],
+      [-18.4, 2.42, 27.8, 0xffc88b, 7.8, 3.8],
+      [10.2, 2.48, .2, 0xffd59d, 8.6, 2.5],
+      [-12.0375, 2.51, 11.795, 0xffecd5, 8, 2.7],
+    ]) {
+      const light = new THREE.PointLight(color, intensity, range, 2);
+      light.position.set(x, y, z);
+      scene.add(light);
+    }
     this.weaponSun = new THREE.DirectionalLight(0xffefd7, 2.65);
     this.weaponSky = new THREE.HemisphereLight(0xc6defc, 0x9d7e62, 1.38);
     this.weaponSun.castShadow = true;
@@ -352,8 +373,13 @@ export class RenderGraph {
       depthNormal: null, velocity: null, previousAO: null, inverseProjection: camera.projectionMatrixInverse,
       texel: this.texel, valid: 0, frame: 0, taps: 4, lowPrecision: this.lowPrecision,
     });
+    this.roadReflection = screenMaterial(roadReflection, {
+      sceneColor: null, depthNormal: null, skyPhoto, projection: camera.projectionMatrix,
+      inverseProjection: camera.projectionMatrixInverse, cameraWorld: camera.matrixWorld,
+      view: camera.matrixWorldInverse, eye: camera.position, reflectionSteps: 20,
+    });
     this.temporal = screenMaterial(S.temporal, {
-      currentColor: null, history: null, depthNormal: null, velocity: null, ao: null,
+      currentColor: null, history: null, depthNormal: null, velocity: null, ao: null, reflectedRoad: null, applyReflection: 0,
       mlAtlas: null, mlMatrix0: this.shadows.matrices[0], mlMatrix1: this.shadows.matrices[1],
       inverseVP: this.inverseVP, cameraWorld: camera.matrixWorld, eye: camera.position, sun: SUN, frame: 0,
       texel: this.texel, aoTexel: this.aoTexel, valid: 0, applyAO: 1, lowPrecision: this.lowPrecision,
@@ -363,7 +389,7 @@ export class RenderGraph {
     this.tileVelocity = screenMaterial(S.tileVelocity, { velocity: null, texel: this.texel });
     this.composite = screenMaterial(S.composite, {
       image: null, hands: null, bloom0: null, bloom1: null, bloom2: null, exposure: null, depthNormal: null,
-      velocity: null, tiles: null, aoDebug: null, grade: this.grade, texel: this.texel, tileTexel: this.tileTexel,
+      velocity: null, tiles: null, aoDebug: null, reflectionDebug: null, grade: this.grade, texel: this.texel, tileTexel: this.tileTexel,
       time: 0, damage: 0, critical: 0, heat: 1, blur: .15, bloomAmount: 1,
       vignette: 1, chromatic: 0, gas: this.gasVector, lowPrecision: this.lowPrecision, debug: 0, toneMappingExposure: 1,
     });
@@ -420,6 +446,7 @@ export class RenderGraph {
     if (this.preset.ao >= 4) this.viewColor.samples = Math.min(4, this.renderer.capabilities.maxSamples);
     this.buffers = this.makeTarget(w, h, { count: 2, nearest: true });
     this.aoHistory = Array.from({ length: 2 }, () => this.makeTarget(aw, ah, { nearest: true }));
+    this.reflections = this.hdr && this.preset.reflections ? this.makeTarget(aw, ah) : null;
     this.history = [this.makeTarget(w, h), this.makeTarget(w, h)];
     this.exposureHistory = [this.makeTarget(1, 1), this.makeTarget(1, 1)];
     this.blooms = [4, 8, 16].map(step => this.makeTarget(Math.ceil(w / step), Math.ceil(h / step)));
@@ -429,7 +456,10 @@ export class RenderGraph {
     this.shadows.dirty = true;
   }
 
-  register() { this.shadows.register(this.scene); }
+  register() {
+    this.skyOcclusion.bake(this.scene);
+    this.shadows.register(this.scene);
+  }
 
   trackMotion(root, active = () => true) {
     root.traverse(source => {
@@ -533,10 +563,10 @@ export class RenderGraph {
     this.pass(this.sky, this.sceneColor, {});
     r.render(scene, camera);
 
-    r.setRenderTarget(this.viewColor);
-    r.setClearColor(0x000000, 0);
-    r.clear();
     if (weapon) {
+      r.setRenderTarget(this.viewColor);
+      r.setClearColor(0x000000, 0);
+      r.clear();
       this.inverseCamera.copy(camera.quaternion).invert();
       this.weaponSunVector.copy(SUN).applyQuaternion(this.inverseCamera);
       this.weaponSun.position.copy(this.weaponSunVector).multiplyScalar(5).add(this.weaponSun.target.position);
@@ -548,6 +578,10 @@ export class RenderGraph {
     this.pass(this.geometry, this.buffers, { sceneDepth: this.sceneColor.depthTexture });
     if (preset.ao >= 4 && moving) this.drawMotion();
     const [depthNormal, velocity] = this.buffers.textures;
+    // Reflect opaque scene color before transient smoke and particles blend.
+    if (this.reflections) this.pass(this.roadReflection, this.reflections, {
+      sceneColor: this.sceneColor.texture, depthNormal, reflectionSteps: preset.reflections,
+    });
     if (particles && moving) {
       particles.uniforms.depthNormal.value = depthNormal;
       particles.uniforms.depthTexel.value.copy(this.texel);
@@ -566,11 +600,12 @@ export class RenderGraph {
     this.pass(this.temporal, this.history[next], {
       currentColor: this.sceneColor.texture, history: this.history[this.index].texture,
       depthNormal, velocity, ao: this.aoHistory[next].texture,
+      reflectedRoad: this.reflections?.texture ?? null, applyReflection: Number(Boolean(this.reflections)),
       mlAtlas: this.shadows.uniforms.mlAtlas.value, frame: this.frame % 32,
       applyAO: Number(Boolean(preset.ao)), valid: this.valid && preset.ao ? 1 : 0,
     });
     const image = this.history[next].texture;
-    const hands = this.viewColor.texture;
+    const hands = weapon ? this.viewColor.texture : this.emptyHands;
     const bloomAmount = this.hdr ? preset.bloom : 0;
     if (bloomAmount) {
       let from = this.sceneColor;
@@ -593,7 +628,7 @@ export class RenderGraph {
     this.pass(this.composite, null, {
       image, hands, bloom0: this.blooms[0].texture, bloom1: this.blooms[1].texture, bloom2: this.blooms[2].texture,
       exposure: this.exposureHistory[next].texture, depthNormal, velocity, tiles: this.tiles.texture,
-      aoDebug: this.aoHistory[next].texture, time, damage: hurt, critical: Math.max(0, 1 - health / 40), blur, bloomAmount, heat: Number(preset.ao > 0),
+      aoDebug: this.aoHistory[next].texture, reflectionDebug: this.reflections?.texture ?? null, time, damage: hurt, critical: Math.max(0, 1 - health / 40), blur, bloomAmount, heat: Number(preset.ao > 0),
       vignette: Number(this.settings.vignette), chromatic: Number(this.settings.chromatic), debug: this.debug,
     });
 
@@ -621,15 +656,17 @@ export class RenderGraph {
   dispose() {
     for (const target of this.targets) target.dispose();
     this.shadows.dispose();
+    this.skyOcclusion.dispose();
     for (const { previousSkin } of this.motionMeshes) previousSkin?.dispose();
     this.motion.dispose();
     this.environment?.dispose();
     this.skyPhoto.dispose();
     this.weaponSun.shadow.dispose();
-    for (const pass of [this.sky, this.geometry, this.ao, this.temporal, this.bloom, this.exposure, this.tileVelocity, this.composite]) pass.dispose();
+    for (const pass of [this.sky, this.geometry, this.ao, this.roadReflection, this.temporal, this.bloom, this.exposure, this.tileVelocity, this.composite]) pass.dispose();
     this.triangle.geometry.dispose();
     this.triangle.material.dispose();
     this.grade.dispose();
+    this.emptyHands.dispose();
     this.renderer.dispose();
   }
 }

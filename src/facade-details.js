@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { createShopMaterials } from './shop-interiors.js';
+
+export { addShopInterior as addAccessibleShopInterior } from './shop-interiors.js';
 
 function panelMaterial(canvas, properties) {
   const map = new THREE.CanvasTexture(canvas);
@@ -93,7 +96,7 @@ function wallPoster(seed) {
 }
 
 export function createFacadeMaterials(seed) {
-  return { mosaic: mosaicTile(seed), poster: wallPoster(seed ^ 0x45d9f3b) };
+  return { mosaic: mosaicTile(seed), poster: wallPoster(seed ^ 0x45d9f3b), ...createShopMaterials(seed) };
 }
 
 export function addFacadePier(frame, left, right, face, style, bay) {
@@ -167,6 +170,61 @@ export function addDetailedShopRecess(frame, x, y, face, width, height, variant,
   }
 }
 
+export function addShopRecessInterior(frame, x, y, face, width, height, variant, tint) {
+  const reveal = face - 0.41;
+  const wood = 0x8b7056;
+  const metal = 0x787b70;
+  frame.box('limestone', 0x978975, x, y - height / 2, reveal + 0.014, width + 0.13, 0.083, 0.27);
+  frame.box('wood', wood, x, y + height / 2 - 0.028, reveal + 0.051, width + 0.096, 0.101, 0.206);
+  for (const side of [-1, 1]) {
+    frame.box('wood', wood, x + side * (width / 2 - 0.006), y, reveal + 0.054,
+      0.084, height - 0.066, 0.214);
+  }
+  if (variant === 2) {
+    frame.box('shutter', tint, x, y, reveal + 0.006, width - 0.076, height - 0.092, 0.036);
+    frame.box('metal', metal, x, y + height / 2 - 0.123, reveal - 0.01, width - 0.066, 0.156, 0.13);
+    frame.box('metal', metal, x, y - height / 2 + 0.081, reveal - 0.027, width - 0.08, 0.062, 0.053);
+    frame.box('metal', 0x6b5f4b, x + width * 0.29, y - 0.378, reveal - 0.042, 0.09, 0.123, 0.056);
+    frame.pipe(x + width * 0.29, y - 0.286, reveal - 0.053,
+      x + width * 0.29, y + height / 2 - 0.192, reveal - 0.053, 0.011, metal);
+    return;
+  }
+  frame.box('wood', 0x755e49, x, y, reveal + 0.002, width - 0.076, height - 0.08, 0.034);
+  const panelW = (width - 0.173) / 2;
+  for (const side of [-1, 1]) {
+    const panelX = x + side * (panelW / 2 + 0.015);
+    for (let rail = 0; rail < 3; rail++) {
+      frame.box('wood', wood, panelX, y + (rail - 1) * height * 0.29, reveal - 0.022,
+        panelW - 0.061, 0.074, 0.036);
+    }
+    frame.box('wood', wood, panelX + side * (panelW / 2 - 0.029), y, reveal - 0.021,
+      0.056, height - 0.12, 0.039);
+    frame.box('metal', metal, x + side * 0.087, y - 0.19, reveal - 0.053, 0.039, 0.126, 0.031);
+  }
+  frame.box('wood', wood, x, y, reveal - 0.024, 0.069, height - 0.12, 0.045);
+}
+
+function carvedDoorCrown(frame, x, top, face, width, tint) {
+  const radius = width / 2 + 0.10;
+  const y = top + 0.178;
+  for (let segment = 0; segment < 9; segment++) {
+    const a = segment * Math.PI / 9 + 0.002, b = (segment + 1) * Math.PI / 9 - 0.002;
+    const keystone = segment === 4;
+    const shape = new THREE.Shape();
+    shape.moveTo(Math.cos(a) * radius, y + Math.sin(a) * 0.12);
+    shape.lineTo(Math.cos(b) * radius, y + Math.sin(b) * 0.12);
+    shape.lineTo(Math.cos(b) * (radius + 0.086), y + Math.sin(b) * (keystone ? 0.211 : 0.186));
+    shape.lineTo(Math.cos(a) * (radius + 0.086), y + Math.sin(a) * (keystone ? 0.211 : 0.186));
+    shape.closePath();
+    const stone = new THREE.ExtrudeGeometry(shape, {
+      depth: keystone ? 0.112 : 0.089, bevelEnabled: true, bevelThickness: 0.0035,
+      bevelSize: 0.0035, bevelSegments: 1, steps: 1,
+    });
+    frame.mesh(stone, 'limestone', tint, x, 0, face + 0.037);
+    stone.dispose();
+  }
+}
+
 export function addDoorSurround(frame, x, face, width, bottom, top, tint, style, open) {
   const floor = open ? 0.027 : bottom;
   const lintel = top + 0.072;
@@ -187,6 +245,7 @@ export function addDoorSurround(frame, x, face, width, bottom, top, tint, style,
   frame.box(stone, tint, x, lintel, face - 0.16, width + 0.116, 0.144, 0.49);
   frame.box(stone, tint, x, top + 0.103, face + 0.088, width + 0.38, 0.121, 0.149);
   frame.box(stone, tint, x, top + 0.176, face + 0.115, width + 0.43, 0.038, 0.168);
+  if (open && style === 'carved') carvedDoorCrown(frame, x, top, face, width, tint);
   if (!open) {
     frame.box('limestone', 0x978774, x, bottom - 0.025, face - 0.07, width + 0.11, 0.061, 0.42);
     frame.box('limestone', tint, x, bottom - 0.039, face + 0.155, width + 0.23, 0.084, 0.12);
@@ -216,47 +275,6 @@ export function addStoreCanopy(frame, x, face, width, depth, kind) {
     frame.box('metal', 0x59554c, u, roofY - 0.31, face + 0.026, 0.112, 0.314, 0.081);
     frame.pipe(u, roofY - 0.435, face + 0.054,
       u, roofY - 0.18, face + depth * 0.77, 0.019, 0x666050);
-  }
-}
-
-export function addAccessibleShopInterior(frame, width, depth, scheme, through) {
-  const side = -width / 2 + 0.26;
-  const shelfZ = -depth * 0.23;
-  const front = depth / 2 - 0.44;
-  for (let z = -depth / 2 + 0.5; z <= front; z += 1.43) {
-    frame.box('wood', 0x635143, 0, 2.908, z, width - 0.42, 0.165, 0.174);
-  }
-  // Merchandise sits above the existing counter's footprint.
-  for (const z of [shelfZ - 0.99, shelfZ + 0.99]) {
-    frame.box('wood', 0x80664e, side + 0.084, 1.50, z, 0.078, 1.294, 0.067);
-  }
-  for (const height of [1.25, 1.78, 2.25]) {
-    frame.box('wood', 0x827057, side + 0.23, height, shelfZ, 0.54, 0.063, 2.081);
-    for (const [index, z] of [-0.76, -0.41, 0.13, 0.54, 0.76].entries()) {
-      const h = 0.124 + index % 3 * 0.039;
-      frame.box(index % 2 ? 'cloth' : 'wood', scheme === 'carved' ? 0xaa8653 : 0x8a8468,
-        side + 0.27, height + 0.033 + h / 2, shelfZ + z, 0.29, h, 0.19);
-    }
-  }
-  const lightZ = depth * 0.21;
-  frame.pipe(0, 2.517, lightZ, 0, 2.834, lightZ, 0.016, 0x655d4f);
-  frame.box('metal', 0x55544b, 0, 2.482, lightZ, 0.53, 0.079, 0.209);
-  frame.box('lantern', 0xffd99a, 0, 2.435, lightZ, 0.42, 0.022, 0.136);
-  if (scheme === 'carved' && !through) {
-    const rear = -depth / 2 + 0.333;
-    const innerWidth = width - 0.43;
-    frame.box('plaster', 0xbca98e, 0, 1.48, rear, innerWidth, 2.96, 0.11);
-    frame.box('brick', 0x7c8b7e, 0, 0.46, rear + 0.069, innerWidth, 0.84, 0.051);
-    frame.box('wood', 0x695948, 0, 0.93, rear + 0.077, innerWidth, 0.071, 0.073);
-    frame.box('wood', 0x73604a, 0, 2.74, rear + 0.056, innerWidth, 0.084, 0.043);
-    frame.plate('poster', 0xf2dfb7, -width * 0.22, 1.71, rear + 0.058, 0.49, 0.72);
-    frame.plate('poster', 0xcaac88, width * 0.31, 1.64, rear + 0.058, 0.39, 0.58);
-    for (const offset of [-0.24, 0.23]) {
-      const x = offset * width;
-      frame.box('cloth', 0x745b47, x, 0.039, 0.04, 1.5, 0.005, depth * 0.51);
-      frame.box('cloth', 0x9c774f, x, 0.043, 0.04, 1.35, 0.003, depth * 0.49);
-      frame.box('cloth', 0x625847, x, 0.046, 0.04, 1.17, 0.002, depth * 0.475);
-    }
   }
 }
 

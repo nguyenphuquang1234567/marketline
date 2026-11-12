@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { streetWetnessGLSL } from './street-surface.js';
 
 const textures = import.meta.glob('./assets/world-textures/*.webp', {
   eager: true, query: '?inline', import: 'default',
@@ -37,6 +38,21 @@ const weathering = {
     diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 0.66, 0.63, 0.54 ), damp );
     roughnessFactor = mix( roughnessFactor, 0.73, damp * 0.38 );
   `,
+  road: /* glsl */ `
+    vec2 street = marketSurfacePosition.xz;
+    float variation = marketSurfaceNoise(street * .21);
+    float fineDirt = marketSurfaceNoise(street * 2.1 + vec2(6., 3.));
+    float verge = smoothstep(3.3, 6.4, abs(street.x));
+    float dust = smoothstep(.31, .79, .68 * variation + .32 * fineDirt) * mix(.36, .83, verge);
+    float swept = 1. - smoothstep(.13, .75, min(abs(street.x + 1.12), abs(street.x - 1.03)));
+    float polish = swept * smoothstep(.29, .68, variation) * (1. - verge);
+    vec3 dustColor = vec3(.25, .192, .127);
+    diffuseColor.rgb = mix(diffuseColor.rgb, dustColor, dust * .19);
+    diffuseColor.rgb *= mix(vec3(1.08, 1.02, .96), vec3(.75, .78, .79), variation * .86);
+    roughnessFactor = mix(roughnessFactor, .58, polish * .56);
+    diffuseColor.rgb *= mix(vec3(1.), vec3(.52, .59, .62), streetWet * .91);
+    roughnessFactor = mix(roughnessFactor, .19, streetWet * .9);
+  `,
   asphalt: /* glsl */ `
     vec2 street = marketSurfacePosition.xz;
     float patches = marketSurfaceNoise( street * 0.39 + 1.8 );
@@ -44,14 +60,27 @@ const weathering = {
     float resurfaced = smoothstep( 0.42, 0.75, patches * 0.83 + aggregate * 0.17 );
     diffuseColor.rgb *= mix( vec3( 1.08, 1.05, 1.00 ), vec3( 0.71, 0.73, 0.74 ), resurfaced );
     roughnessFactor = mix( roughnessFactor, 0.71, resurfaced * 0.36 );
+    diffuseColor.rgb *= mix(vec3(1.), vec3(.53, .59, .61), streetWet * .85);
+    roughnessFactor = mix(roughnessFactor, .18, streetWet * .91);
   `,
   limestone: /* glsl */ `
     vec2 paving = marketSurfacePosition.xz;
     float dust = marketSurfaceNoise( paving * 1.3 + 0.19 * marketSurfacePosition.y );
     float traffic = marketSurfaceNoise( paving * 0.31 + 3.1 );
     float polish = smoothstep( 0.43, 0.79, traffic * 0.72 + dust * 0.28 );
-    diffuseColor.rgb *= mix( vec3( 1.08, 1.04, 0.96 ), vec3( 0.80, 0.76, 0.68 ), polish );
-    roughnessFactor = mix( roughnessFactor, 0.68, polish * 0.45 );
+    diffuseColor.rgb *= mix( vec3( 1.08, 1.04, 0.96 ), vec3( 0.80, 0.76, 0.68 ), polish * (1. - marketSurfaceVertical) );
+    roughnessFactor = mix( roughnessFactor, 0.68, polish * 0.45 * (1. - marketSurfaceVertical) );
+    if (marketSurfaceVertical > .05) {
+      float height = marketSurfacePosition.y;
+      vec2 wall = vec2(paving.x + paving.y, height);
+      float stain = marketSurfaceNoise(wall * vec2(1.45, .38) + 7.8);
+      float streak = marketSurfaceNoise(wall * vec2(4.3, .2) + vec2(0., stain));
+      float mineral = smoothstep(.25, .78, marketSurfaceNoise(wall * .92 - 12.3));
+      float splash = 1. - smoothstep(.05, .96 + stain * .48, height);
+      float damp = marketSurfaceVertical * (smoothstep(.42, .81, stain * .65 + streak * .35) * .29 + splash * .48);
+      diffuseColor.rgb *= mix(vec3(1.04, 1.02, 1.), vec3(.82, .79, .71), mineral * .67 * marketSurfaceVertical);
+      diffuseColor.rgb *= mix(vec3(1.), vec3(.57, .53, .46), damp);
+    }
   `,
 };
 
@@ -117,6 +146,7 @@ function addPlasterDamage(material, shader) {
 function addWeathering(material, kind) {
   const treatment = weathering[kind];
   if (!treatment) return;
+  const wetGround = kind === 'road' || kind === 'asphalt';
   material.customProgramCacheKey = () => `marketline-surface-${kind}`;
   material.onBeforeCompile = shader => {
     shader.vertexShader = surfaceVaryings + shader.vertexShader.replace(
@@ -131,6 +161,20 @@ function addWeathering(material, kind) {
       '#include <roughnessmap_fragment>',
       `#include <roughnessmap_fragment>\n{ ${treatment} }`,
     );
+    if (wetGround) {
+      shader.fragmentShader = streetWetnessGLSL + shader.fragmentShader
+        .replace('#include <roughnessmap_fragment>', /* glsl */ `
+          #include <roughnessmap_fragment>
+          float streetWet = 0.;
+          if (abs(marketSurfacePosition.y) < .035 && marketSurfaceVertical < .30) {
+            streetWet = streetWetness(marketSurfacePosition.xz);
+          }
+        `)
+        .replace('#include <normal_fragment_maps>', THREE.ShaderChunk.normal_fragment_maps.replace(
+          'mapN.xy *= normalScale;',
+          'mapN.xy *= normalScale * mix(1., .42, streetWet);',
+        ));
+    }
     if (kind === 'plaster') addPlasterDamage(material, shader);
   };
 }

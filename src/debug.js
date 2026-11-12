@@ -25,7 +25,7 @@ function pointCloud(vertices, color, size) {
 }
 
 export const DEBUG_NAMES = ['Frame timing', 'Normals', 'Velocity', 'Depth', 'Shadow cascades',
-  'Ambient occlusion', 'Collision BVH', 'Navigation', 'Cover', 'Audio probes'];
+  'Ambient occlusion', 'Collision BVH', 'Navigation', 'Cover', 'Audio probes', 'Road reflections'];
 
 export class DebugView {
   constructor(scene, physics, nav) {
@@ -39,7 +39,7 @@ export class DebugView {
   set(mode) {
     for (const node of this.items.values()) node.visible = false;
     this.mode = mode;
-    if (mode < 6) return;
+    if (mode < 6 || mode === 10) return;
     let node = this.items.get(mode);
     if (!node) {
       node = this.build(mode);

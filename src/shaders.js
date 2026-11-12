@@ -1,3 +1,5 @@
+import { blendRoadReflection, roadReflectionUniforms } from './road-reflection.js';
+
 export const screenVertex = /* glsl */ `
 out vec2 uvScreen;
 void main() {
@@ -162,6 +164,7 @@ uniform float lowPrecision;
 out vec4 pixel;
 #include <packing>
 ${decodeOctahedralNormal}
+${roadReflectionUniforms}
 vec3 yCoCg(vec3 c){return vec3(dot(c,vec3(.25,.5,.25)),.5*(c.r-c.b),.5*c.g-.25*(c.r+c.b));}
 vec3 rgb(vec3 c){return vec3(c.x+c.y-c.z,c.x+c.z,c.x-c.y-c.z);}
 float depth(vec4 v) { return lowPrecision>.5 ? exp2(clamp(v.b,0.,1.)*8.)-1. : v.b; }
@@ -232,10 +235,11 @@ void main() {
     shaft = (shaft / 6.) * smoothstep(2.5, 28., marchDist) * phase;
     src += vec3(1.18, .96, .73) * shaft * .061;
   }
+  ${blendRoadReflection}
   vec3 cur=yCoCg(src), lo=cur, hi=cur;
   for(int i=0;i<4;i++) {
     vec2 off=i==0?vec2(1,0):i==1?vec2(-1,0):i==2?vec2(0,1):vec2(0,-1);
-    vec3 sampleColor=yCoCg(texture(currentColor,uvScreen+off*texel).rgb * contact);
+    vec3 sampleColor=yCoCg(texture(currentColor,uvScreen+off*texel).rgb * contact * (1. - reflected.a) + reflected.rgb);
     lo=min(lo,sampleColor);hi=max(hi,sampleColor);
   }
   vec4 motion=texture(velocity,uvScreen);
@@ -319,6 +323,7 @@ uniform sampler2D depthNormal;
 uniform sampler2D velocity;
 uniform sampler2D tiles;
 uniform sampler2D aoDebug;
+uniform sampler2D reflectionDebug;
 uniform highp sampler3D grade;
 uniform vec2 texel;
 uniform vec2 tileTexel;
@@ -346,6 +351,7 @@ void main() {
   if(debug==3){float z=depth(dn);pixel=vec4(vec3(exp(-z*.032)),1.);return;}
   if(debug==4){float z=depth(dn);pixel=vec4(z<19.?vec3(.2,.7,.4):z<47.?vec3(.8,.59,.16):z<89.?vec3(.64,.25,.25):vec3(.2,.34,.62),1.);return;}
   if(debug==5){pixel=vec4(vec3(texture(aoDebug,uv).r),1.);return;}
+  if(debug==10){pixel=vec4(toSrgb(texture(reflectionDebug,uv).rgb),1.);return;}
   float z=depth(dn);
   uv.x+=sin(uv.y*182.+time*3.+z*.068)*.00049*smoothstep(25.,77.,z)*smoothstep(.27,.5,uv.y)*(1.-smoothstep(.51,.68,uv.y))*dn.a*heat;
   if(gas.z>.005){

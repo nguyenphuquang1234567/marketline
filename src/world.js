@@ -2,12 +2,15 @@ import * as THREE from 'three';
 import { createScannedMaterial, WORLD_MATERIAL_METERS } from './world-materials.js';
 import {
   addAccessibleShopInterior, addDetailedShopRecess, addDoorSurround, addFacadePier, addPlasterHood,
-  addServiceEntrance, addShopRecess, addStoreCanopy, createFacadeMaterials,
+  addServiceEntrance, addShopRecess, addShopRecessInterior, addStoreCanopy, createFacadeMaterials,
 } from './facade-details.js';
 import { sandbagGeometry, sandbagSeamGeometry } from './sandbag-geometry.js';
 import { addCastIronDrain, addMarketScale, addMeterDetails, addRolledShutter, addSteelDrum, addTimberCrate, streetLabel, succulentLeaf, terracottaPlanter } from './street-details.js';
 import { addPickupDetails } from './pickup-details.js';
 import { createStreetMaterials } from './street-finishes.js';
+import { addServicePaving, addStoneRunner, addUtilityRepairs } from './market-paving.js';
+import { addLoadingAwning, addShadePergola, dressStall, reinforceAwning } from './market-stall.js';
+import { addMarketSkyline } from './market-skyline.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const TAU = Math.PI * 2;
@@ -46,6 +49,10 @@ function makeMaterials(seed) {
   materials.lantern = new THREE.MeshStandardMaterial({
     vertexColors: true, color: 0xffe4a8, roughness: 0.25, metalness: 0.1, emissive: 0xffb85c, emissiveIntensity: 2.1,
   });
+  materials.stallCloth = materials.cloth.clone();
+  materials.stallCloth.side = THREE.DoubleSide;
+  materials.skyline = materials.plaster.clone();
+  materials.skyline.name = 'Marketline skyline';
   materials.gravel = materials.plaster;
   materials.stain = new THREE.MeshStandardMaterial({
     map: stainTexture(seed), vertexColors: true, roughness: 0.98, transparent: true,
@@ -113,10 +120,12 @@ class StaticBatches {
     const uv = geometry.getAttribute('uv');
     const colors = geometry.getAttribute('color');
     const offset = batch.position.length / 3;
-    const fixedUV = material.startsWith('sign') || ['stain', 'mosaic', 'poster', 'streetLabel', 'cabinGlass'].includes(material);
+    const fixedUV = material.startsWith('sign') || ['stain', 'mosaic', 'poster', 'streetLabel', 'cabinGlass', 'shopRug', 'shopMenu'].includes(material);
     const isGround = ['road', 'asphalt', 'gravel', 'lantern'].includes(material);
-    const meters = WORLD_MATERIAL_METERS[material === 'sandbag' ? 'cloth' : material];
-    const worldUV = ['plaster', 'road', 'asphalt', 'limestone', 'brick', 'shutter'].includes(material);
+    const textureType = material === 'sandbag' || material === 'stallCloth' ? 'cloth'
+      : material === 'skyline' ? 'plaster' : material;
+    const meters = WORLD_MATERIAL_METERS[textureType];
+    const worldUV = ['plaster', 'road', 'asphalt', 'limestone', 'brick', 'shutter'].includes(textureType);
     const uOffset = fixedUV ? 0 : (x * 0.19 + z * 0.13) % 1;
     const vOffset = fixedUV ? 0 : y * 0.2 % 1;
     for (let i = 0; i < p.count; i++) {
@@ -171,9 +180,9 @@ class StaticBatches {
       meshGeometry.setIndex(batch.index);
       meshGeometry.computeBoundingSphere();
       const mesh = new THREE.Mesh(meshGeometry, this.materials[batch.material]);
-      mesh.castShadow = !['road', 'asphalt', 'glass', 'autoGlass', 'cabinGlass', 'gravel', 'stain', 'lantern', 'mosaic', 'poster', 'streetLabel'].includes(batch.material)
+      mesh.castShadow = !['road', 'asphalt', 'glass', 'autoGlass', 'cabinGlass', 'gravel', 'stain', 'lantern', 'mosaic', 'poster', 'streetLabel', 'shopTile', 'shopRug', 'shopMenu', 'skyline'].includes(batch.material)
         && !batch.material.startsWith('sign');
-      mesh.receiveShadow = batch.material !== 'lantern';
+      mesh.receiveShadow = batch.material !== 'lantern' && batch.material !== 'skyline';
       this.scene.add(mesh);
     }
     this.batches.clear();
@@ -336,9 +345,10 @@ export function buildWorld(scene, seed = 56103) {
         const p = point(x, y, z);
         plate(mat, tint, p.x, y, p.z, w, h, angle);
       },
-      mesh(geometry, mat, tint, x, y, z, sx = 1, sy = 1, sz = 1, a = 0) {
+      mesh(geometry, mat, tint, x, y, z, sx = 1, sy = 1, sz = 1, a = 0, uScale, vScale) {
         const p = point(x, y, z);
-        batches.add(geometry, mat, tint, p.x, y, p.z, sx, sy, sz, angle + a);
+        const stretch = mat === 'stallCloth';
+        batches.add(geometry, mat, tint, p.x, y, p.z, sx, sy, sz, angle + a, uScale ?? (stretch ? sx : 1), vScale ?? (stretch ? sy : 1));
       },
       body(x, y, z, w, h, d, surface) {
         const p = point(x, y, z);
@@ -457,7 +467,10 @@ export function buildWorld(scene, seed = 56103) {
         if (!open) {
           if (access) {
             const surface = variant === 4 ? 'glass' : variant === 2 ? 'metal' : 'wood';
-            frame.body(u, center, face - 0.18, w, h, 0.2, surface);
+            if (isDoor) {
+              frame.body(u, center, face - 0.29, w, h, 0.42, surface);
+              addShopRecessInterior(frame, u, center, face, w, h, variant, trim);
+            } else frame.body(u, center, face - 0.18, w, h, 0.2, surface);
           }
           if (detailedDoor) {
             if (variant === 2) {
@@ -651,6 +664,7 @@ export function buildWorld(scene, seed = 56103) {
       const { center, span, projection, finish } = options.canopy;
       addStoreCanopy(f, width * center, depth / 2 + 0.012, Math.min(span, width - 1.2), projection, finish);
     }
+    if (options.loadingAwning) addLoadingAwning(f, width, depth / 2 + .018, x > 0);
     if (options.streetFront) {
       placeAsset('ShopLantern', f.p(-width / 2 + 0.48, 3.71, depth / 2 + 0.006), angle);
     }
@@ -668,7 +682,10 @@ export function buildWorld(scene, seed = 56103) {
       }
     }
     if (access) {
-      if (!options.through) f.body(0, top / 2, -depth / 2 + 0.13, width, top, 0.26);
+      if (!options.through) {
+        const wallDepth = options.streetFront ? 0.39 : 0.26;
+        f.body(0, top / 2, -depth / 2 + wallDepth / 2, width, top, wallDepth);
+      }
       f.box('plaster', 0x777465, 0, 0.018, 0, width, 0.036, depth);
       f.body(0, 0.018, 0, width - 0.16, 0.036, depth - 0.16, 'tile');
       for (let y = 3.1; y < top; y += 3.1) {
@@ -755,38 +772,49 @@ export function buildWorld(scene, seed = 56103) {
     const vertices = [];
     const colors = [];
     const tint = new THREE.Color();
+    const append = (a, b, c, shadeA, shadeB, shadeC) => {
+      vertices.push(...a.toArray(), ...b.toArray(), ...c.toArray());
+      colors.push(tint.r * shadeA, tint.g * shadeA, tint.b * shadeA,
+        tint.r * shadeB, tint.g * shadeB, tint.b * shadeB, tint.r * shadeC, tint.g * shadeC, tint.b * shadeC);
+    };
     for (let j = 0; j < 10; j++) {
-      const a = j / 10 * TAU + range(-0.18, 0.18);
-      const length = range(2.0, 3.4);
-      const angle = vector(Math.cos(a), 0, Math.sin(a));
+      const azimuth = j / 10 * TAU + range(-.18, .18);
+      const length = range(2, 3.4);
+      const angle = vector(Math.cos(azimuth), 0, Math.sin(azimuth));
       const side = vector(-angle.z, 0, angle.x);
-      const profile = t => angle.clone().multiplyScalar(t * length).add(vector(0, Math.sin(t * Math.PI * 0.95) * 0.87 - t * t * 0.82, 0));
-      for (let i = 0; i < 19; i++) {
-        const a = i / 19;
-        const b = (i + 1) / 19;
-        const start = profile(a);
-        const end = profile(b);
-        const startA = start.clone().addScaledVector(side, (1 - a) * 0.039);
-        const startB = start.clone().addScaledVector(side, -(1 - a) * 0.039);
-        const endA = end.clone().addScaledVector(side, (1 - b) * 0.039);
-        const endB = end.clone().addScaledVector(side, -(1 - b) * 0.039);
-        vertices.push(...startA.toArray(), ...startB.toArray(), ...endA.toArray(),
-          ...endA.toArray(), ...startB.toArray(), ...endB.toArray());
-        for (let v = 0; v < 6; v++) colors.push(0.18, 0.21, 0.083);
+      const upper = j % 3 === 0;
+      const rise = upper ? 1.57 : .84;
+      const hang = upper ? .51 : 1.21;
+      const profile = t => angle.clone().multiplyScalar(t * length)
+        .add(vector(0, Math.sin(t * Math.PI * .83) * rise - t * t * hang, 0));
+      tint.set(0x7e8350);
+      for (let i = 0; i < 16; i++) {
+        const a = i / 16, b = (i + 1) / 16;
+        const start = profile(a), end = profile(b);
+        const startWidth = .032 * (1 - a * .93), endWidth = .032 * (1 - b * .93);
+        const startA = start.clone().addScaledVector(side, startWidth);
+        const startB = start.clone().addScaledVector(side, -startWidth);
+        const endA = end.clone().addScaledVector(side, endWidth);
+        const endB = end.clone().addScaledVector(side, -endWidth);
+        append(startA, startB, endA, .72, .77, 1);
+        append(endA, startB, endB, 1, .77, .89);
       }
       for (let i = 0; i < 17; i++) {
         const t = (i + 1) / 18;
-        const root = profile(t - 0.017);
-        const root2 = profile(t + 0.021);
-        const width = (0.07 + Math.sin(t * Math.PI) * 0.52) * (1 - t * 0.46);
-        for (const s of [-1, 1]) {
-          const ridge = profile(t + 0.056).addScaledVector(side, width * s * 0.48);
-          const leaf = profile(t + 0.067).addScaledVector(side, width * s).addScaledVector(angle, 0.17);
-          leaf.y -= width * 0.82;
-          tint.set(pick([0x4f663b, 0x667849, 0x809052, 0x566c42, 0x788b50]));
-          vertices.push(...root.toArray(), ...root2.toArray(), ...ridge.toArray(),
-            ...root.toArray(), ...ridge.toArray(), ...leaf.toArray());
-          for (let k = 0; k < 6; k++) colors.push(tint.r, tint.g, tint.b);
+        const leafLength = (.12 + Math.sin(Math.PI * t) * .62) * (1 - t * .38);
+        for (const sign of [-1, 1]) {
+          tint.set(pick(j % 5 === 4 ? [0x78804e, 0x847e4e, 0x869054, 0x9b995f, 0x798750]
+            : [0x4f663b, 0x667849, 0x809052, 0x566c42, 0x788b50]));
+          const root = profile(t + sign * .006);
+          const tip = root.clone().addScaledVector(side, sign * leafLength * .84).addScaledVector(angle, leafLength * .71);
+          tip.y -= leafLength * (.68 + .18 * Math.sin(i * 4.15));
+          const ridge = root.clone().lerp(tip, .46).addScaledVector(UP, leafLength * .12);
+          const left = ridge.clone().addScaledVector(angle, -.031 * (1 - t * .55)).addScaledVector(UP, -.027);
+          const right = ridge.clone().addScaledVector(angle, .043 * (1 - t * .55)).addScaledVector(UP, -.021);
+          append(root, left, ridge, .64, .87, 1.1);
+          append(root, ridge, right, .64, 1.1, .77);
+          append(ridge, left, tip, 1.1, .87, .74);
+          append(ridge, tip, right, 1.1, .74, .77);
         }
       }
     }
@@ -884,7 +912,9 @@ export function buildWorld(scene, seed = 56103) {
     awning(f.p(0, 2.87, -depth / 2 - 0.06), angle, width + 0.46, depth + 0.22, style);
     const tableZ = 0.06;
     f.box('wood', shade(wood, 1.23), 0, 0.9, tableZ, width * 0.91, 0.103, 1.1);
-    f.box('cloth', style === 1 ? 0x597874 : 0xa47850, 0, 0.49, tableZ + 0.42, width * 0.86, 0.75, 0.04);
+    const cloth = [0x956742, 0x5a7974, 0x77654a, 0x8a5b4a][style];
+    dressStall(f, width, tableZ, cloth, shade(wood, .89));
+    reinforceAwning(f, width, depth);
     f.box('wood', shade(wood, 0.68), 0, 0.2, tableZ, width * 0.9, 0.089, 0.87);
     for (const u of [-width * 0.4, width * 0.4]) {
       for (const v of [-0.46, 0.44]) f.box('wood', wood, u, 0.42, tableZ + v, 0.095, 0.84, 0.099);
@@ -968,14 +998,58 @@ export function buildWorld(scene, seed = 56103) {
     const fill = new THREE.ExtrudeGeometry(fillShape, { depth: depth - 0.13, bevelEnabled: false, curveSegments: 14 });
     batches.add(fill, 'limestone', 0xc1ac90, 0, 0, z - (depth - 0.13) / 2, 1, 1, 1);
     fill.dispose();
+    // The flat wall behind the cut stone is mortar. Each staggered face
+    // course stops at the curved moulding and can weather independently.
+    const faceRadius = outer + .062;
+    const edgeAt = y => Math.sqrt(Math.max(0, faceRadius ** 2 - (y - spring) ** 2));
+    const courseHeight = .685;
+    for (let row = 0; row < 8; row++) {
+      const bottom = spring + row * courseHeight + .011;
+      const high = Math.min(9.88, bottom + courseHeight - .022);
+      for (let column = 0; column < 6; column++) {
+        const left = Math.max(0, column * 1.47 - (row % 2) * .735) + .011;
+        const right = Math.min(pierOuter, (column + 1) * 1.47 - (row % 2) * .735) - .011;
+        if (right <= left || right <= edgeAt(high)) continue;
+        const low = Math.max(bottom, spring + Math.sqrt(Math.max(0, faceRadius ** 2 - right ** 2)));
+        if (low >= high) continue;
+        for (const side of [-1, 1]) {
+          const outline = new THREE.Shape();
+          outline.moveTo(side * right, low);
+          outline.lineTo(side * right, high);
+          for (let step = 0; step <= 6; step++) {
+            const y = high - (high - low) * step / 6;
+            outline.lineTo(side * Math.max(left, edgeAt(y)), y);
+          }
+          const stone = new THREE.ExtrudeGeometry(outline, { depth: .034, bevelEnabled: false });
+          for (const face of [-1, 1]) {
+            const tint = colors[(row * 3 + column * 2 + (side + 1) + (face + 1)) % colors.length];
+            batches.add(stone, 'limestone', tint, 0, 0, z + face * 1.30 - .017, 1, 1, 1);
+          }
+          stone.dispose();
+        }
+      }
+    }
     for (const s of [-1, 1]) {
       const x = s * (radius + pierOuter) / 2;
       const width = pierOuter - radius;
       for (let course = 0; course < 7; course++) {
         const y = (course + 0.5) * spring / 7;
-        box('limestone', pick(colors), x, y, z, width + (course < 1 ? 0.26 : 0), spring / 7 - 0.017, depth + (course === 0 ? 0.26 : 0));
+        const stone = pick(colors);
+        const courseWidth = width + (course < 1 ? .26 : 0);
+        const courseDepth = depth + (course === 0 ? .26 : 0);
+        const height = spring / 7;
+        box('limestone', shade(stone, .64), x, y, z, courseWidth - .014, height, courseDepth - .045);
         for (const face of [-1, 1]) {
-          box('limestone', pick(colors), x + s * (course % 2 - 0.5) * 0.76, y, z + face * (depth / 2 + 0.008), 0.026, spring / 7 - 0.023, 0.032);
+          const seam = courseWidth * (course % 2 ? .42 : .57);
+          const tint = pick(colors);
+          box('limestone', stone, x + s * (seam - courseWidth) / 2, y, z + face * (courseDepth / 2 - .012),
+            seam - .016, height - .014, .06);
+          box('limestone', tint, x + s * seam / 2, y, z + face * (courseDepth / 2 - .009),
+            courseWidth - seam - .016, height - .014, .06);
+        }
+        for (const side of [-1, 1]) {
+          box('limestone', shade(stone, side < 0 ? .94 : .91), x + side * (courseWidth / 2 - .018), y, z,
+            .048, height - .016, courseDepth - .04);
         }
       }
       box('plaster', 0xcab393, x, 4.39, z, width + 0.27, 0.145, depth + 0.33);
@@ -984,10 +1058,6 @@ export function buildWorld(scene, seed = 56103) {
       for (const face of [-1, 1]) {
         box('metal', 0x57554b, s * 6.51, 3.72, z + face * 1.57, 0.246, 0.162, 0.478);
         box('flat', 0xb5a179, s * 6.51, 3.62, z + face * 1.61, 0.177, 0.064, 0.241);
-        for (let course = 0; course < 5; course++) {
-          const yy = 5.34 + course * 0.96;
-          box('plaster', 0xb6a186, s * 6.55, yy, z + face * 1.29, 1.53, 0.051, 0.03);
-        }
       }
     }
     for (let slice = 0; slice < 15; slice++) {
@@ -1005,6 +1075,13 @@ export function buildWorld(scene, seed = 56103) {
     for (let i = -6; i <= 6; i++) {
       box('plaster', i % 2 ? 0xb9a07e : 0xc9b28f, i * 1.137, 10.98, z, 0.67, 0.51, 2.74);
       box('plaster', 0xcebc9b, i * 1.137, 11.26, z, 0.75, 0.1, 2.83);
+    }
+    for (let i = -6; i <= 6; i++) {
+      for (const face of [-1, 1]) {
+        const x = i * 1.105;
+        box('limestone', 0xb39a7a, x, 9.99, z + face * 1.49, .24, .19, .31);
+        box('limestone', 0xc6af8f, x, 10.11, z + face * 1.56, .33, .085, .24);
+      }
     }
     const signBack = outerMoulding + mouldingDepth / 2 + 0.012;
     const boardDepth = 0.125;
@@ -1026,6 +1103,8 @@ export function buildWorld(scene, seed = 56103) {
   for (const z of [-41, -31]) {
     box('brick', 0xc1ad8d, 0, -0.014, z, 16.3, 0.023, 8);
   }
+  addUtilityRepairs(round);
+  addServicePaving(box, round);
   const horizontal = new THREE.Quaternion().setFromAxisAngle(vector(1, 0, 0), -Math.PI / 2);
   for (let i = -11; i <= 11; i++) {
     const z = i * 5.17 + 1.5;
@@ -1088,7 +1167,10 @@ export function buildWorld(scene, seed = 56103) {
     for (const [i, z, width] of [[0, 46, 16], [1, 23.5, 15], [2, 5.3, 12.9], [3, -13.3, 13], [4, -29.5, 12.1], [5, -49, 12]]) {
       const d = range(13.2, 16.7);
       building(side * (34.6 + d / 2), z + side * range(-0.8, 0.8), width + range(-1.1, 1), d,
-        -side * Math.PI / 2, i % 3 === 1 ? 3 : 2, pick(palette), { lamp: i % 2 === 0, service: true, style: 'workshop' });
+        -side * Math.PI / 2, i % 3 === 1 ? 3 : 2, pick(palette), {
+          lamp: i % 2 === 0, service: true, style: 'workshop',
+          loadingAwning: side < 0 ? [0, 1, 4].includes(i) : [2, 5].includes(i),
+        });
       if (i % 2 === 1) building(side * 56.7, z + 1.9, width * 0.87, 7.7,
         -side * Math.PI / 2, 2, pick(palette));
     }
@@ -1127,7 +1209,7 @@ export function buildWorld(scene, seed = 56103) {
   pipe(vector(towerX, 13.48, towerZ), vector(towerX, 14.29, towerZ), 0.032, 0x726d59);
   round(LEAF, 'metal', 0x726d59, towerX, 14.21, towerZ, 0.09, 0.1, 0.09);
   for (const [x, z, h, lean] of [
-    [-6.4, 38.4, 8.5, 0.86], [6.8, 30.9, 9.2, -0.45], [-6.0, -24.2, 8.6, 0.65],
+    [-6.4, 38.4, 8.5, 0.86], [7.55, 31.94, 9.2, -0.45], [-6.0, -24.2, 8.6, 0.65],
     [7.45, -40.3, 9.9, -0.72], [-9.9, -42.7, 7.3, 0.26], [8.8, -57.6, 10.7, 0.43],
     [27.2, 24.1, 7.9, 0.63], [-28.8, -11.3, 8.1, -0.63],
   ]) palm(x, z, h, lean);
@@ -1261,19 +1343,13 @@ export function buildWorld(scene, seed = 56103) {
   const dRange = (lo, hi) => lo + (hi - lo) * detailRand();
   const dPick = list => list[Math.floor(detailRand() * list.length)];
 
-  // 1. Overhead wooden shade pergolas (mashrabiya trellises) casting striped sun shafts
-  for (const [zCenter, spanZ] of [[39.8, 3.8], [20.4, 3.4], [1.8, 3.6], [-21.5, 3.2]]) {
-    for (const zBeam of [zCenter - spanZ * 0.45, zCenter + spanZ * 0.45]) {
-      box('wood', 0x6b533b, 0, 6.28, zBeam, 15.9, 0.14, 0.16);
-      for (const s of [-1, 1]) {
-        box('metal', 0x48473f, s * 7.82, 6.08, zBeam, 0.22, 0.42, 0.22);
-      }
-    }
-    const slats = 18;
-    for (let s = 0; s < slats; s++) {
-      const sx = -7.2 + (s / (slats - 1)) * 14.4;
-      box('wood', s % 2 ? 0x7d6246 : 0x6e553c, sx, 6.39, zCenter, 0.14, 0.055, spanZ + 0.35);
-    }
+  for (const [z, span, awnings] of [
+    [39.8, 3.8, [[-3.44, 3.38, 0xad9473], [3.46, 2.21, 0x83795e]]],
+    [20.4, 3.4, [[1.45, 4.68, 0xa58c68]]],
+    [1.8, 3.6, [[-3.64, 3.46, 0x92815e], [1.35, 2.47, 0x827d63]]],
+    [-14.6, 3.2, [[3.48, 2.88, 0x9c896d]]],
+  ]) {
+    addShadePergola(local(0, z, 0), span, awnings);
   }
 
   const addArchLantern = (lx, ly, lz) => {
@@ -1292,7 +1368,9 @@ export function buildWorld(scene, seed = 56103) {
     if (z > -45 && z < -27) continue;
     for (const s of [-1, 1]) {
       const stoneTint = dPick([0x9e927c, 0x948873, 0xa89b84, 0x8d826e]);
-      box('brick', stoneTint, s * 4.85, -0.008, z + dRange(-0.08, 0.08), 0.92, 0.022, 2.35);
+      const stoneZ = z + dRange(-0.08, 0.08);
+      box('road', shade(stoneTint, .69), s * 4.85, -.007, stoneZ, .922, .003, 2.35);
+      addStoneRunner(round, s * 4.85, stoneZ, Math.abs(Math.round(z + s * 7)) % 4, shade(stoneTint, 1.68));
     }
   }
   for (const zBand of [-26.8, -34.8]) {
@@ -1310,6 +1388,7 @@ export function buildWorld(scene, seed = 56103) {
     placeAsset('TerracottaPair', vector(ax, Math.abs(ax) > 6.3 ? 0.065 : 0.007, az), dRange(-0.62, 0.62));
   }
 
+  addMarketSkyline(local, shade);
   batches.build();
   const dustPositions = [];
   const dustPhase = [];

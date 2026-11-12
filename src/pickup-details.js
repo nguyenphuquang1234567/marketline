@@ -1,80 +1,62 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { addTireTreads, streetLabel } from './street-details.js';
+import { streetLabel } from './street-details.js';
+import { addGlazedCab, addPickupDecks, addPickupWheels, addStampedBody, addWheelArchReturns, panel } from './pickup-shell.js';
 
 // Vehicle space uses +Z forward, with Y=0 at the tire contact plane.
 const TAU = Math.PI * 2;
+const { lerp, smoothstep } = THREE.MathUtils;
 const CAB_BEAM = new RoundedBoxGeometry(2, 1, 2, 1, 0.16);
 const STEERING_RIM = new THREE.TorusGeometry(.147, .015, 7, 20).rotateX(-.52);
-const DRUM = new THREE.CylinderGeometry(1, 1, 1, 18);
-const tireGeometry = new THREE.LatheGeometry([
-  [0.209, -0.118], [0.267, -0.127], [0.336, -0.123], [0.373, -0.105],
-  [0.391, -0.069], [0.392, 0.069], [0.374, 0.106], [0.337, 0.122],
-  [0.266, 0.127], [0.209, 0.117],
-].map(([radius, width]) => new THREE.Vector2(radius, width)), 32).rotateZ(Math.PI / 2);
 
-function pressedSidePanel(axles, wheelY, damaged = false) {
-  const outline = new THREE.Shape();
-  outline.moveTo(-2.16, .49);
-  for (const axle of axles) {
-    for (let step = 0; step <= 12; step++) {
-      const arc = Math.PI - .225 - (Math.PI - .45) * step / 12;
-      outline.lineTo(axle + Math.cos(arc) * .432, wheelY + Math.sin(arc) * .432);
-    }
-  }
-  outline.lineTo(2.12, .49);
-  if (damaged) {
-    // The buckled top stops short of the engine bay, leaving the wheel lip intact.
-    outline.lineTo(2.08, .763);
-    outline.lineTo(1.86, .852);
-    outline.lineTo(1.70, .798);
-    outline.lineTo(1.56, .879);
-    outline.lineTo(1.41, .851);
-    outline.lineTo(1.26, .926);
-    outline.lineTo(1.09, .906);
-    outline.lineTo(.92, 1.166);
-  } else {
-    outline.lineTo(2.15, 1.116);
-    outline.lineTo(1.86, 1.16);
-    outline.lineTo(1.07, 1.185);
-  }
-  outline.lineTo(-.3, 1.245);
-  outline.lineTo(-.48, 1.109);
-  outline.lineTo(-2.15, 1.109);
-  outline.closePath();
-  const panel = new THREE.ExtrudeGeometry(outline, {
-    depth: .09, steps: 1, bevelEnabled: true,
-    bevelSize: damaged ? .012 : .025, bevelThickness: .021, bevelSegments: 2,
-  });
-  return panel.translate(0, 0, -.045).rotateY(-Math.PI / 2);
+function tube(f, points, radius, material, tint) {
+  const path = new THREE.CatmullRomCurve3(points.map(point => new THREE.Vector3(...point)));
+  const geometry = new THREE.TubeGeometry(path, 16, radius, 7, false);
+  f.mesh(geometry, material, tint, 0, 0, 0);
+  geometry.dispose();
 }
 
 function addEngineBay(f, rounded) {
-  const beam = 0x504945;
-  const steel = 0x827b6b;
-  const oxide = 0x795747;
+  const beam = 0x4b4640;
+  const steel = 0x67635a;
+  const oxide = 0x6b5144;
   const hose = 0x363832;
 
   rounded('rubber', 0x34342d, 0, .662, 1.53, 1.37, .073, 1.15, .029);
   rounded('coatedSteel', beam, 0, 1.006, .997, 1.54, .39, .106, .025);
   for (const side of [-1, 1]) {
     rounded('coatedSteel', beam, side * .591, .709, 1.542, .154, .17, 1.18, .030);
-    f.pipe(side * .67, 1.119, 1.022, side * .506, .877, 2.051, .037, oxide, 'coatedSteel', CAB_BEAM);
-    f.pipe(side * .615, .71, 1.455, side * .836, .426, 1.33, .055, beam, 'metal', CAB_BEAM);
+    const innerWing = panel(28, 9, (u, v) => {
+      const z = lerp(1.042, 2.069, u);
+      const arch = .215 * Math.exp(-(((z - 1.324) / .36) ** 4));
+      const rib = .009 * Math.sin(v * Math.PI * 7) * Math.sin(u * Math.PI);
+      const x = lerp(.505 + .011 * Math.cos(z * 5), .773 - .044 * u, v);
+      const lip = .054 * smoothstep(v, .76, .99);
+      return [side * x, .757 + arch + .069 * v + lip + rib, z];
+    }, [0, -.015, 0], side < 0);
+    f.mesh(innerWing, 'coatedSteel', side < 0 ? 0x675c4d : beam, 0, 0, 0);
+    innerWing.dispose();
+    f.pipe(side * .615, .71, 1.455, side * .803, .427, 1.33, .035, beam, 'metal', CAB_BEAM);
+    for (const z of [1.14, 1.43, 1.84]) {
+      const y = .879 + .215 * Math.exp(-(((z - 1.324) / .36) ** 4));
+      const x = side * (.760 - .044 * (z - 1.042));
+      f.pipe(x, y - .007, z, x, y + .014, z, .011, steel);
+    }
   }
 
   // The cylinder head, exhaust runners and heat shield share the lower block.
-  rounded('metal', 0x655e50, -.074, .828, 1.515, .565, .265, .692, .044);
+  rounded('metal', 0x504b42, -.074, .828, 1.515, .565, .265, .692, .044);
   rounded('coatedSteel', steel, -.075, .995, 1.501, .478, .137, .594, .037);
   for (const side of [-1, 1]) {
     for (let bolt = 0; bolt < 4; bolt++) {
       const z = 1.285 + bolt * .14;
-      f.pipe(-.074 + side * .197, 1.056, z, -.074 + side * .197, 1.078, z, .026, 0xa29882);
-      f.pipe(-.074 + side * .247, .901, z, -.074 + side * .318, .811, z + .036, .034, oxide);
+      f.pipe(-.074 + side * .197, 1.055, z, -.074 + side * .197, 1.074, z, .019, 0x867b6c);
+      tube(f, [[-.074 + side * .247, .900, z], [-.074 + side * .306, .877, z],
+        [-.074 + side * .327, .816, z + .029], [-.074 + side * .315, .775, z + .077]], .022, 'metal', oxide);
     }
   }
   for (let rib = 0; rib < 5; rib++) {
-    f.box('metal', 0x918677, -.075 + (rib - 2) * .063, 1.068, 1.501, .027, .017, .441);
+    f.box('metal', 0x7a7467, -.075 + (rib - 2) * .063, 1.064, 1.501, .019, .017, .423);
   }
   f.pipe(-.105, 1.079, 1.673, -.105, 1.113, 1.673, .047, hose, 'rubber');
   rounded('coatedSteel', 0x69665b, -.478, .908, 1.533, .204, .082, .584, .029);
@@ -111,33 +93,21 @@ function addEngineBay(f, rounded) {
     [hose, .024, [[-.319, .951, 1.367], [-.518, 1.027, 1.414], [-.538, 1.061, 1.78], [-.422, .961, 1.963]]],
     [0x82604b, .011, [[.421, 1.071, 1.373], [.30, 1.122, 1.265], [.194, 1.124, 1.187], [.02, 1.05, 1.044]]],
   ];
-  for (const [tint, radius, points] of lines) {
-    const curve = new THREE.CatmullRomCurve3(points.map(point => new THREE.Vector3(...point)));
-    const tubing = new THREE.TubeGeometry(curve, 13, radius, 7, false);
-    f.mesh(tubing, 'rubber', tint, 0, 0, 0);
-    tubing.dispose();
-  }
+  for (const [tint, radius, points] of lines) tube(f, points, radius, 'rubber', tint);
 
   // A strip of folded bonnet skin remains attached along the far side.
-  const hood = new THREE.Shape();
-  for (const [index, [x, z]] of [
-    [.728, 1.059], [.252, 1.065], [.311, 1.241], [.232, 1.365], [.438, 1.461],
-    [.333, 1.676], [.522, 1.804], [.573, 1.993], [.806, 2.075], [.832, 1.78], [.797, 1.36],
-  ].entries()) {
-    if (index === 0) hood.moveTo(x, z);
-    else hood.lineTo(x, z);
-  }
-  hood.closePath();
-  const folded = new THREE.ExtrudeGeometry(hood, {
-    depth: .028, bevelEnabled: true, bevelSize: .005, bevelThickness: .004, bevelSegments: 1,
-  }).rotateX(Math.PI / 2);
-  const vertices = folded.attributes.position;
-  for (let i = 0; i < vertices.count; i++) {
-    const x = vertices.getX(i), z = vertices.getZ(i);
-    vertices.setY(i, 1.198 + vertices.getY(i) + (1 - x) * .15 + Math.sin(z * 7.6) * .033);
-  }
-  folded.computeVertexNormals();
-  f.mesh(folded, 'coatedSteel', 0x988a70, 0, 0, 0);
+  const folded = panel(42, 10, (u, v) => {
+    const z = lerp(1.065, 2.073, u);
+    const irregular = .055 * Math.sin(u * 29.8) + .025 * Math.sin(u * 60.9);
+    const tear = lerp(.236, .676, smoothstep(u, .11, .96)) + irregular * Math.sin(u * Math.PI);
+    const curl = (.056 + .025 * Math.sin(u * 17)) * (1 - smoothstep(v, 0, .49));
+    const roll = .018 * Math.sin(v * Math.PI) + .013 * Math.sin(v * 12.7 + z * 22.6);
+    return [lerp(tear, .847 - .036 * u, v), 1.197 - .067 * smoothstep(u, .36, 1) + curl + roll, z];
+  }, [0, -.012, 0], false, ([, , z], u, v, inside) => {
+    const dark = inside ? .66 : .79 + .21 * smoothstep(v, .06, .75) - .12 * Math.sin(z * 8) ** 2;
+    return [dark, dark * .93, dark * .86];
+  });
+  f.mesh(folded, 'burntSteel', 0x78786d, 0, 0, 0);
   folded.dispose();
 
   // Spring and damper can be seen in the open near-side wheel well.
@@ -153,32 +123,84 @@ function addEngineBay(f, rounded) {
   f.pipe(-.703, .468, 1.317, -.703, .868, 1.317, .022, steel);
 }
 
+function addCabInterior(f, rounded, damaged) {
+  const dashboard = panel(20, 7, (u, v) => {
+    const t = u * 2 - 1;
+    const curve = .025 * (1 - t ** 2);
+    const hood = .076 * Math.exp(-(((t - .52) / .27) ** 4)) * Math.sin(v * Math.PI) ** 2;
+    return [t * .752, 1.253 + curve + .021 * v + hood, lerp(.642 + .049 * t ** 2, 1.008, v)];
+  }, [0, -.072, 0], true);
+  f.mesh(dashboard, 'rubber', 0x3f3e36, 0, 0, 0);
+  dashboard.dispose();
+  rounded('rubber', 0x464439, 0, 1.009, .282, 1.5, .098, 1.38, .039);
+  f.pipe(.408, 1.228, .764, .408, 1.383, .592, .024, 0x3d3e38, 'rubber');
+  f.mesh(STEERING_RIM, 'rubber', 0x2a2e29, .408, 1.383, .592);
+  for (const side of [-1, 1]) {
+    f.pipe(.408, 1.374, .589, .408 + side * .134, 1.408, .583, .015, 0x49483d, 'rubber');
+  }
+  rounded('rubber', 0x48473c, .408, 1.375, .573, .094, .072, .037, .019);
+  f.pipe(.381, 1.332, .626, .294, 1.373, .613, .008, 0x4b4940);
+  for (let i = 0; i < 5; i++) f.box('rubber', 0x30312a, -.078 + i * .036, 1.281, .887, .021, .007, .059);
+
+  const fabric = ([, , z], u, v, inside) => {
+    const seam = .81 + .19 * smoothstep(Math.abs((u - .5) * 2), .48, .57);
+    const folds = 1 + .08 * Math.sin(z * 144 + u * 26) * Math.sin(u * Math.PI) ** 2;
+    const discoloration = damaged ? .25 * Math.exp(-(((u - .28) / .18) ** 2) - ((v - .69) / .25) ** 2) : 0;
+    const value = (inside ? .71 : seam * folds) * (1 - discoloration);
+    return [value, value * .98, value * .93];
+  };
+  const seatBack = (u, v) => {
+    const t = u * 2 - 1;
+    const width = lerp(.223, .191, v) - .030 * (1 - smoothstep(v, 0, .11) + smoothstep(v, .84, 1));
+    const bolster = .049 * Math.exp(-(((Math.abs(t) - .74) / .23) ** 2)) * Math.sin(v * Math.PI) ** .7;
+    return [t * width, .453 * v, .044 - .142 * v + .027 * (1 - t ** 2) + bolster];
+  };
+  const back = panel(16, 12, seatBack, [0, 0, -.096], false, fabric);
+  const pad = panel(16, 8, (u, v) => {
+    const t = u * 2 - 1;
+    const width = .226 - .041 * (smoothstep(v, .78, 1) + .53 * (1 - smoothstep(v, 0, .16)));
+    const bolster = .034 * Math.exp(-(((Math.abs(t) - .70) / .25) ** 2)) * Math.sin(v * Math.PI) ** .7;
+    return [t * width, .058 * Math.sin(v * Math.PI) + bolster + .021 * v, lerp(-.025, .405, v)];
+  }, [0, -.062, 0], true, fabric);
+  for (const side of [-1, 1]) {
+    const x = side * .421;
+    f.mesh(back, 'cloth', damaged ? 0x6e6657 : 0x6e7066, x, 1.154, .012, 1, 1, 1, 0, .45, .48);
+    f.mesh(pad, 'cloth', damaged ? 0x746a58 : 0x73766a, x, 1.142, .033, 1, 1, 1, 0, .44, .44);
+    for (const offset of [-.055, .055]) f.pipe(x + offset, 1.59, -.094, x + offset, 1.65, -.105, .008, 0x887f70);
+    rounded('cloth', damaged ? 0x665d50 : 0x5b5c53, x, 1.683, -.106, .214, .115, .112, .052);
+    f.box('rubber', 0x48473e, side * .732, 1.145, .275, .105, .219, 1.287);
+    const strap = panel(2, 14, (u, v) => {
+      const sag = Math.sin(v * Math.PI);
+      return [side * (lerp(.621, .736, v) - .027 * sag) + (u - .5) * .040, lerp(1.116, 1.638, v),
+        lerp(.030, -.314, v) - .050 * sag + .014 * (u - .5)];
+    }, [0, 0, -.003]);
+    f.mesh(strap, 'cloth', damaged ? 0x6b6050 : 0x42423a, 0, 0, 0);
+    strap.dispose();
+    f.box('rubber', 0x423c35, side * .196, 1.196, .167, .054, .069, .034);
+    f.box('enamel', 0x775047, side * .196, 1.233, .167, .037, .006, .022);
+  }
+  back.dispose();
+  pad.dispose();
+
+  rounded('rubber', 0x535044, 0, 1.148, .324, .192, .208, .625, .030);
+  f.pipe(0, 1.251, .435, 0, 1.367, .424, .010, 0x686257);
+  rounded('rubber', 0x414139, 0, 1.367, .424, .053, .041, .051, .019);
+  for (const [u, end] of [[-.704, -.148], [.053, .654]]) {
+    f.pipe(u, 1.277, 1.054, end, 1.316, 1.053, .009, 0x363733, 'rubber');
+  }
+}
+
 export function addPickupDetails(f, shade, color, index) {
   const damaged = index === 0;
   const finish = damaged ? 'burntSteel' : 'enamel';
   const paint = shade(color, damaged ? .74 : .88);
   const bright = shade(color, damaged ? .94 : 1.12);
-  const rubber = 0x353632;
   const seal = 0x3b3b35;
-  const glass = 0x4d5a59;
-  const axles = [-1.37, 1.33];
-  const wheelY = 0.392;
   const rounded = (material, tint, u, y, v, w, h, d, radius) => {
-    const geometry = new RoundedBoxGeometry(w, h, d, 2, radius);
+    const geometry = new RoundedBoxGeometry(w, h, d, 1, Math.min(radius, Math.min(w, h, d) * .49));
     f.mesh(geometry, material, tint, u, y, v);
     geometry.dispose();
   };
-  const sheet = (material, tint, corners) => {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(corners.flat(), 3));
-    const uv = [0, 0, 1, 0, 1, 1, 0, 1];
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv.slice(0, corners.length * 2), 2));
-    geometry.setIndex(corners.length === 4 ? [0, 1, 2, 0, 2, 3] : [0, 1, 2]);
-    geometry.computeVertexNormals();
-    f.mesh(geometry, material, tint, 0, 0, 0);
-    geometry.dispose();
-  };
-
   // Narrow inner chassis leaves room for recessed tire wells in the outer panels.
   rounded('rubber', 0x4c4b43, 0, 0.52, 0.02, 1.21, 0.28, 4.30, 0.045);
   rounded('coatedSteel', paint, 0, .816, -1.34, 1.66, .126, 1.62, .036);
@@ -187,9 +209,18 @@ export function addPickupDetails(f, shade, color, index) {
     addEngineBay(f, rounded);
   } else {
     rounded('enamel', paint, 0, .91, .81, 1.66, .30, 2.71, .068);
-    rounded('enamel', bright, 0, 1.125, 1.53, 1.69, .18, 1.34, .074);
   }
-  rounded(finish, paint, 0, 1.007, -2.13, 1.76, .335, .14, .036);
+  const tailgate = panel(24, 11, (u, v) => {
+    const t = u * 2 - 1;
+    const edges = smoothstep(Math.abs(t), .91, 1);
+    const recess = (1 - smoothstep(Math.abs(t), .77, .86)) * smoothstep(v, .19, .29) * (1 - smoothstep(v, .72, .82));
+    const impact = damaged ? .018 * Math.exp(-(((t + .49) / .22) ** 2) - ((v - .54) / .34) ** 2) : 0;
+    return [t * .862, lerp(.819, 1.126, v) - .010 * edges * v,
+      -2.184 + edges * .032 + recess * .025 + impact - .009 * smoothstep(v, .84, .98)];
+  }, [0, 0, .043], true);
+  f.mesh(tailgate, finish, paint, 0, 0, 0);
+  tailgate.dispose();
+  rounded('coatedSteel', paint, 0, .801, -2.136, 1.68, .065, .087, .013);
   rounded('coatedSteel', paint, 0, .833, -2.192, .361, .129, .038, .016);
   rounded('rubber', seal, 0, 1.09, -2.203, .173, .053, .016, .007);
   f.box('coatedSteel', bright, 0, 1.09, -2.215, .135, .019, .01);
@@ -231,108 +262,38 @@ export function addPickupDetails(f, shade, color, index) {
       f.pipe(-.75, .964, 2.14, -.722, .931, 2.187, .008, 0x78674c, 'rubber');
       f.pipe(-.722, .931, 2.187, -.671, .908, 2.162, .008, 0x78674c, 'rubber');
     }
-    rounded('enamel', 0x9d4a30, side * 0.838, 0.949, -2.157, 0.122, 0.225, 0.099, 0.019);
-    f.box('flat', 0xb6a37b, side * 0.839, 0.981, -2.211, 0.082, 0.041, 0.01);
-    f.box('flat', 0xb68b4c, side * 0.911, 1.018, 1.988, 0.015, 0.037, 0.113);
-  }
-
-  const bodyPanel = pressedSidePanel(axles, wheelY);
-  const tornPanel = damaged ? pressedSidePanel(axles, wheelY, true) : null;
-
-  // The roof, A-pillars and sloping glazing form one cab rather than a box on the hood.
-  rounded(finish, bright, 0, 1.854, 0.274, 1.596, 0.131, 1.253, 0.061);
-  const windshield = [[-.728, 1.273, 1.041], [.728, 1.273, 1.041], [.691, 1.778, .86], [-.691, 1.778, .86]];
-  if (damaged) {
-    sheet('cabinGlass', glass, [windshield[0], [-.452, 1.273, 1.041], [-.641, 1.457, .975]]);
-    sheet('cabinGlass', glass, [windshield[1], windshield[2], [.532, 1.778, .86], [.573, 1.572, .934]]);
-  } else {
-    sheet('cabinGlass', glass, windshield);
-  }
-  f.pipe(-.766, 1.264, 1.043, .766, 1.264, 1.043, .021, seal, 'rubber', CAB_BEAM);
-  f.pipe(-.738, 1.783, .855, .738, 1.783, .855, .022, seal, 'rubber', CAB_BEAM);
-
-  sheet('cabinGlass', glass, [[.722, 1.275, -.398], [-.722, 1.275, -.398], [-.695, 1.787, -.344], [.695, 1.787, -.344]]);
-  rounded(finish, paint, 0, 1.179, -.418, 1.56, .171, .115, .035);
-  f.pipe(-.75, 1.779, -.344, .75, 1.779, -.344, .023, seal, 'rubber', CAB_BEAM);
-
-  // The tinted glazing exposes the dashboard, seats, and wheel from either side.
-  rounded('rubber', 0x45433b, 0, 1.252, .863, 1.52, .118, .324, .043);
-  rounded('rubber', 0x383a35, .402, 1.338, .772, .433, .083, .23, .036);
-  rounded('rubber', 0x464439, 0, 1.009, .282, 1.5, .098, 1.38, .039);
-  f.pipe(.408, 1.267, .766, .408, 1.405, .593, .029, 0x3d3e38, 'rubber');
-  f.mesh(STEERING_RIM, 'rubber', 0x2a2e29, .408, 1.405, .593);
-  f.box('rubber', 0x46463e, .408, 1.401, .596, .24, .043, .028);
-  for (const side of [-1, 1]) {
-    rounded('cloth', 0x736b58, side * .421, 1.152, .167, .477, .119, .45, .053);
-    rounded('cloth', 0x655e4d, side * .421, 1.402, -.065, .453, .464, .125, .059);
-    rounded('cloth', 0x5e5848, side * .421, 1.683, -.078, .208, .112, .108, .044);
-    f.box('rubber', 0x48473e, side * .732, 1.145, .275, .105, .219, 1.287);
-    if (damaged) {
-      for (const rail of [-.059, .059]) {
-        f.pipe(side * .421 + rail, 1.606, -.075, side * .421 + rail, 1.653, -.079, .010, 0x9c8e77);
-      }
-      rounded('cloth', 0x98896c, side * .421, 1.4, -.003, .267, .334, .022, .01);
-      f.pipe(side * .583, 1.163, .128, side * .631, 1.639, -.321, .014, 0x8c7b62, 'cloth');
+    rounded('rubber', 0x484037, side * .836, .943, -2.147, .123, .208, .092, .020);
+    rounded('enamel', 0x91452f, side * .835, .944, -2.191, .102, .186, .035, .012);
+    f.box('flat', 0xb6a37b, side * .835, .967, -2.211, .079, .036, .008);
+    for (const y of [.893, .913, .996, 1.014]) {
+      f.box('enamel', 0x82432e, side * .835, y, -2.21, .081, .004, .005);
     }
+    if (!damaged || side > 0) f.box('flat', 0xb68b4c, side * .848, 1.018, 1.988, .022, .037, .113);
   }
-  f.box('rubber', 0x555247, 0, 1.167, .316, .195, .241, .633);
-  f.pipe(0, 1.25, .435, 0, 1.397, .447, .012, 0x626158);
-  rounded('rubber', 0x42433b, 0, 1.397, .447, .062, .049, .055, .02);
-  for (const [u, end] of [[-0.71, -0.14], [0.05, 0.67]]) {
-    f.pipe(u, 1.288, 1.048, end, 1.332, 1.032, 0.013, 0x363733, 'rubber');
-  }
-  rounded('coatedSteel', 0x4f5149, 0, .908, -1.336, 1.594, .065, 1.55, .021);
-  for (let slat = -6; slat <= 6; slat++) {
-    f.box('coatedSteel', 0x626358, slat * .119, .948, -1.34, .032, .017, 1.47);
-  }
+
+  addStampedBody(f, finish, paint, damaged);
+  addWheelArchReturns(f, finish, paint, damaged);
+  addPickupDecks(f, finish, bright, damaged);
+  addGlazedCab(f, finish, paint, damaged);
+
+  addCabInterior(f, rounded, damaged);
 
   for (const side of [-1, 1]) {
     const exposedSide = damaged && side === -1;
-    f.mesh(exposedSide ? tornPanel : bodyPanel, finish,
-      exposedSide ? 0xa29782 : paint, side * .836, 0, 0);
-    rounded(finish, bright, side * 0.851, 1.122, -1.36, 0.134, 0.071, 1.53, 0.033);
-    rounded('coatedSteel', paint, side * .735, .991, -1.37, .197, .163, .671, .038);
-    f.box('rubber', seal, side * 0.905, 0.791, 0.342, 0.018, 0.018, 1.316);
-    f.box('rubber', seal, side * 0.905, 1.008, -0.331, 0.016, 0.42, 0.017);
-    f.box('rubber', seal, side * 0.905, 1.001, .988, .014, .412, .011);
-    f.box('rubber', 0x514d43, side * .912, 1.143, -.117, .019, .062, .185);
-    rounded('coatedSteel', shade(color, .79), side * .931, 1.148, -.117, .032, .039, .154, .012);
-    if (!damaged) streetLabel(f, 'delivery', side * .906, 1.013, .376, .48, .214, side * Math.PI / 2);
-    f.box('rubber', seal, side * .906, .691, .144, .018, .037, .929);
-    f.box('metal', 0x767468, side * .913, .692, .144, .012, .010, .89);
-    f.box('coatedSteel', paint, side * .907, .982, -1.508, .012, .163, .167);
-    f.box('rubber', seal, side * .914, .981, -1.448, .006, .028, .035);
-    f.pipe(side * .788, 1.234, 1.044, side * .744, 1.818, .838, .045, color, finish, CAB_BEAM);
-    f.pipe(side * .788, 1.234, -.419, side * .744, 1.818, -.337, .057, color, finish, CAB_BEAM);
-    f.pipe(side * .808, 1.251, -.396, side * .812, 1.251, 1.014, .023, seal, 'rubber', CAB_BEAM);
-    f.pipe(side * .77, 1.781, -.33, side * .773, 1.781, .83, .026, seal, 'rubber', CAB_BEAM);
-    if (exposedSide) {
-      sheet('cabinGlass', glass, [[-.821, 1.266, -.389], [-.824, 1.266, -.125], [-.797, 1.49, -.366]]);
-    } else {
-      sheet('cabinGlass', glass, [[side * .821, 1.266, -.389], [side * .826, 1.266, 1.005],
-        [side * .766, 1.78, .816], [side * .766, 1.78, -.338]]);
-    }
-    f.pipe(side * .823, 1.264, -.188, side * .769, 1.783, -.188, .021, seal, 'rubber', CAB_BEAM);
-    f.pipe(side * .824, 1.269, .646, side * .769, 1.783, .646, .014, seal, 'rubber', CAB_BEAM);
+    // Handles and locks mount into recessed plates on the independently stamped doors.
+    rounded('rubber', 0x3a3830, side * .879, 1.138, -.154, .020, .061, .164, .009);
+    rounded('coatedSteel', shade(color, .72), side * .891, 1.142, -.155, .021, .023, .116, .007);
+    f.pipe(side * .888, 1.137, -.243, side * .904, 1.137, -.243, .010, 0x837b68);
+    if (!damaged) streetLabel(f, 'delivery', side * .905, 1.027, .356, .38, .16, side * Math.PI / 2);
+    f.box('rubber', seal, side * .842, .655, .257, .019, .036, 1.144);
+    f.box('metal', 0x736e61, side * .853, .655, .257, .015, .007, 1.108);
+    rounded('coatedSteel', paint, side * .850, .984, -1.57, .019, .133, .147, .008);
+    f.box('rubber', seal, side * .860, .982, -1.519, .005, .017, .018);
     if (!exposedSide) {
       f.pipe(side * .852, 1.37, .791, side * 1.027, 1.418, .824, .028, seal, 'rubber');
       rounded('enamel', bright, side * 1.046, 1.442, .825, .193, .123, .125, .037);
       f.box('autoGlass', 0x737871, side * 1.047, 1.449, .758, .146, .074, .015);
     }
-    for (const axle of axles) {
-      f.mesh(tireGeometry, 'rubber', rubber, side * 0.886, wheelY, axle);
-      addTireTreads(f, side * .886, wheelY, axle);
-      f.pipe(side * 0.777, wheelY, axle, side * 1.005, wheelY, axle, 0.227, 0x77756d, 'metal', DRUM);
-      f.pipe(side * 1.003, wheelY, axle, side * 1.017, wheelY, axle, 0.182, 0x4c4e47, 'metal', DRUM);
-      f.pipe(side * 1.01, wheelY, axle, side * 1.031, wheelY, axle, 0.082, 0x77786e, 'metal', DRUM);
-      for (let lug = 0; lug < 6; lug++) {
-        const a = lug * TAU / 6;
-        const yy = wheelY + Math.sin(a) * 0.127;
-        const zz = axle + Math.cos(a) * 0.127;
-        f.pipe(side * 1.013, yy, zz, side * 1.023, yy, zz, 0.018, 0x9a978b);
-      }
-    }
   }
-  bodyPanel.dispose();
-  tornPanel?.dispose();
+  addPickupWheels(f, damaged);
 }

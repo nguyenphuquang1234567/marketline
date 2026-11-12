@@ -287,7 +287,7 @@ class Marketline {
       if (event.code === 'Escape' && live()) { this.pause(); return; }
       if (event.code === 'Backquote' && live() && !event.repeat) {
         this.debugMode = (this.debugMode + 1) % DEBUG_NAMES.length;
-        this.renderer.debug = this.debugMode < 6 ? this.debugMode : 0;
+        this.renderer.debug = this.debugMode < 6 || this.debugMode === 10 ? this.debugMode : 0;
         this.diagnostics.set(this.debugMode);
         this.ui.el.telemetry.hidden = this.debugMode === 0;
       }
