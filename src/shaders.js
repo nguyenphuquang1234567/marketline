@@ -9,75 +9,21 @@ export const sky = /* glsl */ `
 uniform mat4 inverseVP;
 uniform vec3 eye;
 uniform vec3 sun;
-uniform float time;
-uniform int cloudOctaves;
+uniform sampler2D skyPhoto;
 out vec4 pixel;
-float hash(vec2 p) {
-  vec3 q = fract(vec3(p.xyx) * .1031);
-  q += dot(q, q.yzx + 33.33);
-  return fract((q.x + q.y) * q.z);
-}
-float noise(vec2 p) {
-  vec2 i = floor(p), f = fract(p);
-  f = f * f * (3. - 2. * f);
-  return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i+1.), f.x), f.y);
-}
-float fbm(vec2 p) {
-  float n = 0., a = .54;
-  for (int i=0; i<5; i++) {
-    if (i >= cloudOctaves) break;
-    n += noise(p) * a;
-    p = mat2(1.62,1.19,-1.19,1.62)*p + vec2(11.23,19.47);
-    a *= .49;
-  }
-  return n;
-}
-float clouds(vec2 p) {
-  float cover = noise(p*.28+vec2(3.2,8.1));
-  p += vec2(noise(p*.94+4.),noise(p*.81-8.))*.66;
-  return fbm(p)*.78 + cover*.22;
-}
+
 void main() {
-  vec4 farPoint = inverseVP * vec4(uvScreen*2.-1.,1.,1.);
-  vec3 dir = normalize(farPoint.xyz / farPoint.w - eye);
-  float up = max(dir.y,0.);
-  float sunDot = max(dot(dir,sun),0.);
-  float haze = exp(-up*6.4);
-  float rayleigh = .73 + .27 * sunDot * sunDot;
-  float mie = .007 * (1.-.78*.78) / pow(max(.012,1.+.78*.78-1.56*sunDot),1.5);
-  vec3 color = mix(vec3(.068,.298,.81)*rayleigh, vec3(.64,.74,.79),haze);
-  color += vec3(.78,.55,.33) * mie;
-  color += vec3(.22,.14,.07) * pow(sunDot, 6.) * haze;
-  color += vec3(9.5,7.6,5.8) * smoothstep(.99959,.99978,sunDot);
-  if (up > .002 && up < .065) {
-    float az = atan(dir.x, dir.z);
-    float ridge1 = .018 + .014 * fbm(vec2(az * 2.8 + 1.7, 0.5));
-    float ridge2 = .011 + .009 * fbm(vec2(az * 5.4 - 3.1, 1.9));
-    float duneMask = (1. - smoothstep(ridge1 - .003, ridge1 + .003, up)) * .38
-                   + (1. - smoothstep(ridge2 - .002, ridge2 + .002, up)) * .28;
-    vec3 duneTint = mix(vec3(.52,.47,.42), vec3(.74,.61,.47), pow(sunDot, 2.));
-    color = mix(color, duneTint, clamp(duneMask, 0., .62));
-  }
-  if (up > .016) {
-    vec2 projected = eye.xz / 620. + dir.xz / max(up,.034) * 1.09;
-    vec2 drift = vec2(time*.006,time*.0026);
-    vec2 cirrusP = projected*.69+vec2(17.6,8.2)+drift*.7;
-    float cirrus = smoothstep(.55,.72,fbm(cirrusP * vec2(.9,1.84))) * .39;
-    color = mix(color, vec3(1.16,1.25,1.32),cirrus*smoothstep(.018,.13,up));
-    vec2 p = projected + vec2(5.24,13.16) + drift;
-    float d = clouds(p);
-    float upper = cloudOctaves > 3 ? clouds(p + projected*.16 + vec2(.29,.08)) : d;
-    float lower = cloudOctaves > 4 ? clouds(p - projected*.092 - vec2(.15,.21)) : d;
-    float billow = max(d,max(upper-.045,lower-.06));
-    float edge = smoothstep(.458,.54,billow);
-    float brightEdge = clamp((billow - clouds(p + sun.xz * .2)) * 5.8 + .54,0.,1.);
-    float density = smoothstep(.45,.69,d*.52+upper*.33+lower*.15);
-    vec3 cloud = mix(vec3(.43,.50,.60),vec3(1.71,1.73,1.70),
-      clamp(.64 - density*.42 + brightEdge*.50,0.,1.));
-    cloud += vec3(.18,.14,.09) * pow(sunDot,10.);
-    color = mix(color,cloud,edge*smoothstep(.015,.14,up));
-  }
-  pixel = vec4(color,1.);
+  vec4 farPoint = inverseVP * vec4(uvScreen * 2. - 1., 1., 1.);
+  vec3 direction = normalize(farPoint.xyz / farPoint.w - eye);
+  vec2 panoramaUV = vec2(
+    atan(direction.z, direction.x) / 6.2831853 + .5,
+    asin(clamp(direction.y, -1., 1.)) / 3.14159265 + .5
+  );
+  vec3 skyRadiance = texture(skyPhoto, panoramaUV).rgb * 2.38;
+  float sunFacing = dot(direction, sun);
+  float solarDisc = smoothstep(.999980, .999991, sunFacing);
+  skyRadiance += solarDisc * vec3(6.5, 5.1, 3.65);
+  pixel = vec4(skyRadiance, 1.);
 }`;
 
 export const geometryBuffers = /* glsl */ `
@@ -248,7 +194,7 @@ void main() {
       shaft += shadowTap(wp) * heightAtten;
     }
     shaft = (shaft / 6.) * smoothstep(2.5, 28., marchDist) * phase;
-    src += vec3(1.18, .92, .62) * shaft * .095;
+    src += vec3(1.18, .96, .73) * shaft * .061;
   }
   vec3 cur=yCoCg(src), lo=cur, hi=cur;
   for(int i=0;i<4;i++) {

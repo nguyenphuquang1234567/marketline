@@ -13,7 +13,7 @@ npm run build
 npm run preview
 ```
 
-The production build contains `dist/index.html` and `dist/marketline.js`. Geometry, fonts, shaders, and audio synthesis are bundled for offline play. Keep the two files together.
+The production build contains `dist/index.html` and `dist/marketline.js`. Geometry, textures, fonts, shaders, and audio synthesis are bundled for offline play. Keep the two files together.
 
 ## Controls
 
@@ -51,4 +51,8 @@ The browser harness runs the production build, captures gameplay checkpoints, an
 
 Collision uses analytic box proxies and ground. Reactive box contacts use conservative bounds, and ragdolls use position-based distance and bend constraints. This leaves triangle-mesh sweeps, general convex manifolds, and explicit ragdoll twist constraints unimplemented. The temporal passes track world camera motion and bot and prop transforms. The viewmodel composites after world TAA, and transparent effects use an approximate reactive history weight.
 
-The reference video was unavailable, so the district follows the written art direction. All game assets are generated in code. The bundled Barlow Condensed font is distributed under the [SIL Open Font License](src/fonts/OFL.txt).
+## Asset credits
+
+- The map uses [photographic surface scans](src/assets/world-textures/CREDITS.md) and [Kloofendal 38d Partly Cloudy (Pure Sky)](https://polyhaven.com/a/kloofendal_38d_partly_cloudy_puresky) by Greg Zaal and Jarod Guest from Poly Haven, all CC0. The sky is re-exposed, rotated to match the map sun, and bundled as WebP.
+- The market's produce trays, woven baskets, ceramics, and shop lanterns are modeled in Blender and bundled as a single glTF asset.
+- Barlow Condensed is distributed under the [SIL Open Font License](src/fonts/OFL.txt).

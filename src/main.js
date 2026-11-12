@@ -13,6 +13,9 @@ import { SynthAudio } from './audio.js';
 import { Interface, loadSettings } from './ui.js';
 import { Effects, randomFor } from './effects.js';
 import { RenderGraph } from './render.js';
+import { loadMarketSky, MARKET_SUN } from './market-sky.js';
+import { loadMarketProps } from './market-props.js';
+import { waitForWorldMaterials } from './world-materials.js';
 import { DebugView, DEBUG_NAMES } from './debug.js';
 
 const parameters = new URLSearchParams(location.search);
@@ -103,7 +106,13 @@ class Marketline {
     this.player = { id: 'player', name: 'YOU', team: 0, position: this.controller.position };
     this.weapon = new WeaponView(this.weaponScene, SEED);
     const corpse = new THREE.Group();
-    this.soldiers = soldierVariants(await new GLTFLoader().loadAsync(soldierURL));
+    const [soldier, skyPhoto] = await Promise.all([
+      new GLTFLoader().loadAsync(soldierURL),
+      loadMarketSky(),
+      loadMarketProps(this.scene, this.world.assetPlacements),
+      waitForWorldMaterials(),
+    ]);
+    this.soldiers = soldierVariants(soldier);
     this.playerRig = new BotRig(corpse, 7, 0, this.soldiers.templates[0]);
     corpse.visible = false;
     this.scene.add(corpse);
@@ -123,7 +132,7 @@ class Marketline {
     this.setLandmark('spawn');
     this.ui.progress('Warming renderer');
     await this.paint();
-    this.renderer = new RenderGraph(canvas, this.scene, this.camera, this.weaponScene, this.settings, QA);
+    this.renderer = new RenderGraph(canvas, this.scene, this.camera, this.weaponScene, this.settings, skyPhoto, QA);
     this.renderer.register();
     this.diagnostics = new DebugView(this.scene, this.physics, this.botSystem.nav);
     this.debugMode = 0;
@@ -737,7 +746,7 @@ class Marketline {
           this.diagnostics.audioRay(i, this.camera.position, direction, obstruction);
         }
         this.audio.setSpace(open / 7);
-        this.light = this.physics.raycast(this.camera.position, this.soundRay.set(-.61, .79, -.39).normalize(), 25) ? .55 : 1;
+        this.light = this.physics.raycast(this.camera.position, MARKET_SUN, 25) ? .55 : 1;
       }
     }
     const interpolating = moving && !this.qaScene;

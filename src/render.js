@@ -1,55 +1,14 @@
 import * as THREE from 'three';
 import * as S from './shaders.js';
+import { MARKET_SUN as SUN } from './market-sky.js';
 
-const SUN = new THREE.Vector3(-.61, .79, -.39).normalize();
 const CASCADE_DISTANCES = [19, 47, 89, 162];
 const PRESETS = {
-  Low:    { scale: .67, floor: .5,  shadows: 512,  cascades: 2, octaves: 3, ao: 0, bloom: 0,   density: .45 },
-  Medium: { scale: .79, floor: .58, shadows: 768,  cascades: 3, octaves: 4, ao: 3, bloom: .7,  density: .7 },
-  High:   { scale: .9,  floor: .63, shadows: 1024, cascades: 4, octaves: 5, ao: 4, bloom: .86, density: 1 },
-  Ultra:  { scale: 1,   floor: .73, shadows: 1536, cascades: 4, octaves: 5, ao: 6, bloom: 1,   density: 1 },
+  Low:    { scale: .67, floor: .5,  shadows: 512,  cascades: 2, ao: 0, bloom: 0,   density: .45 },
+  Medium: { scale: .79, floor: .58, shadows: 768,  cascades: 3, ao: 3, bloom: .7,  density: .7 },
+  High:   { scale: .9,  floor: .63, shadows: 1024, cascades: 4, ao: 4, bloom: .86, density: 1 },
+  Ultra:  { scale: 1,   floor: .73, shadows: 1536, cascades: 4, ao: 6, bloom: 1,   density: 1 },
 };
-
-function skyEnvironment(renderer) {
-  const width = 256, height = 128;
-  const data = new Float32Array(width * height * 4);
-  const direction = new THREE.Vector3();
-  for (let y = 0; y < height; y++) {
-    const elevation = ((y + .5) / height - .5) * Math.PI;
-    const up = Math.sin(elevation);
-    const horizontal = Math.cos(elevation);
-    for (let x = 0; x < width; x++) {
-      const phi = ((x + .5) / width - .5) * 2 * Math.PI;
-      direction.set(Math.cos(phi) * horizontal, up, Math.sin(phi) * horizontal);
-      const facing = Math.max(0, direction.dot(SUN));
-      const halo = facing ** 42 * .75 + facing ** 8 * .18;
-      const horizon = Math.exp(-Math.abs(up) * 5.8);
-      const bounce = Math.max(0, -up);
-      const archWarmth = (.5 + .5 * Math.sin(phi * 2. + .6)) * Math.exp(-Math.abs(up - .08) * 9.);
-      const base = (y * width + x) * 4;
-      if (up >= 0) {
-        data[base] = .13 + horizon * .52 + halo + archWarmth * .14;
-        data[base + 1] = .34 + horizon * .39 + halo * .86 + archWarmth * .09;
-        data[base + 2] = .78 + horizon * .06 + halo * .64;
-      } else {
-        // Warm sandstone & bazaar bounce light from ground and surrounding walls
-        const plaza = .22 + .12 * Math.cos(phi * 3.);
-        data[base] = (.24 + horizon * .18) * (1. - bounce * .35) + plaza * .12;
-        data[base + 1] = (.18 + horizon * .16) * (1. - bounce * .38) + plaza * .08;
-        data[base + 2] = (.12 + horizon * .14) * (1. - bounce * .42) + plaza * .05;
-      }
-      data[base + 3] = 1;
-    }
-  }
-  const source = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.FloatType);
-  source.mapping = THREE.EquirectangularReflectionMapping;
-  source.needsUpdate = true;
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const result = pmrem.fromEquirectangular(source);
-  source.dispose();
-  pmrem.dispose();
-  return result;
-}
 
 const shadowVertex = /* glsl */ `
 varying vec3 mlWorld;
@@ -77,7 +36,7 @@ uniform highp sampler2DArray mlAtlas;
 uniform mat4 mlMatrix[4];
 uniform int mlCount;
 uniform float mlTexel;
-uniform float mlTime;
+uniform vec3 mlSun;
 varying vec3 mlWorld;
 varying vec3 mlWorldNormal;
 varying float mlZ;
@@ -106,8 +65,8 @@ float mlSingle(int cascade, vec3 world, float rot) {
   if (any(lessThan(p, vec3(.001))) || any(greaterThan(p, vec3(.999)))) return 1.;
   float c = cos(rot), s = sin(rot);
   mat2 basis = mat2(c, -s, s, c);
-  float radius = mlTexel * (1.28 + float(cascade) * .28);
-  float bias = .00034 + float(cascade) * .00017;
+  float radius = mlTexel * (1.57 + float(cascade) * .24);
+  float bias = .00014 + float(cascade) * .00007;
   float visibility = 0.;
   for (int i = 0; i < 8; i++) {
     vec2 offset = basis * mlPoisson[i] * radius;
@@ -117,17 +76,18 @@ float mlSingle(int cascade, vec3 world, float rot) {
   return visibility * .125;
 }
 
-float mlShadow(vec3 world) {
+float mlShadow(vec3 world, vec3 normal) {
+  float slope = 1. - clamp(dot(normal, mlSun), 0., 1.);
+  world += normal * slope * .033;
   int k = mlZ < 19. ? 0 : mlZ < 47. ? 1 : mlZ < 89. ? 2 : 3;
   if (mlCount == 2) k = mlZ < 19. ? 0 : 1;
   if (mlCount == 3) k = min(k, 2);
-  float rot = mlHash(floor(gl_FragCoord.xy) + vec2(float(k) * 17.3, 9.1)) * 6.283185;
+  float rot = float(k) * 1.11 + .6;
   float a = mlSingle(k, world, rot);
   float end = k == 0 ? 19. : k == 1 ? 47. : k == 2 ? 89. : 162.;
   float weight = smoothstep(end - 4.5, end, mlZ);
   if (k < mlCount - 1 && weight > .0) a = mix(a, mlSingle(k + 1, world, rot), weight);
-  float field = sin(world.x * .024 + world.z * .017 - mlTime * .041) * sin(world.z * .031 + mlTime * .027);
-  return mix(.095, 1., a) * (1. - .125 * smoothstep(.1, .91, field));
+  return mix(.035, 1., a);
 }
 `;
 
@@ -149,8 +109,8 @@ function lutTexture() {
         const rgb = [r / 32, g / 32, b / 32];
         const lum = rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
         const mid = 4 * lum * (1 - lum);
-        const saturation = 1.065 + .06 * mid;
-        const shift = [mid * .016, mid * .007, -mid * .007];
+        const saturation = 1.025 + .085 * mid;
+        const shift = [mid * .006, mid * .002, -mid * .003];
         for (let j = 0; j < 3; j++) {
           const c = (rgb[j] - lum) * saturation + lum + shift[j];
           data[i + j] = Math.round(255 * THREE.MathUtils.clamp(c, 0, 1));
@@ -169,16 +129,17 @@ function lutTexture() {
 class SunShadows {
   constructor(renderer) {
     this.renderer = renderer;
-    this.cameras = CASCADE_DISTANCES.map(() => {
+    this.cameras = CASCADE_DISTANCES.map((_, index) => {
       const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, .5, 320);
       camera.layers.set(2);
+      if (index < 2) camera.layers.enable(4);
       return camera;
     });
     this.matrices = this.cameras.map(() => new THREE.Matrix4());
     this.material = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
     this.uniforms = {
       mlAtlas: { value: null }, mlMatrix: { value: this.matrices }, mlCount: { value: 4 },
-      mlTexel: { value: 1 / 1024 }, mlTime: { value: 0 },
+      mlTexel: { value: 1 / 1024 }, mlSun: { value: SUN },
     };
     this.targets = new Set();
     this.center = new THREE.Vector3();
@@ -204,7 +165,7 @@ class SunShadows {
   register(scene) {
     scene.traverse(object => {
       if (!object.isMesh) return;
-      if (object.castShadow) object.layers.enable(2);
+      if (object.castShadow) object.layers.enable(object.userData.nearShadowOnly ? 4 : 2);
       if (!object.receiveShadow) return;
       for (const material of (Array.isArray(object.material) ? object.material : [object.material])) {
         if (this.targets.has(material) || (!material.isMeshStandardMaterial && !material.isMeshPhysicalMaterial)) continue;
@@ -225,20 +186,9 @@ class SunShadows {
                 float sunBleach = 1. + (.045 * macroA - .022) + (.032 * macroB - .016);
                 diffuseColor.rgb *= groundAO * soffitAO * sunBleach;
               }`)
-            .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-              {
-                float microVar = mlNoise(mlWorld.xz * 1.45 + mlWorld.y * .95) - .5;
-                roughnessFactor = clamp(roughnessFactor + microVar * .09, .08, .99);
-                if (mlWorld.y < .035 && mlWorldNormal.y > .82) {
-                  float puddle = smoothstep(.58, .79, mlNoise(mlWorld.xz * .21 + vec2(3.7, -6.2)))
-                    * smoothstep(5.8, 1.4, abs(mlWorld.x));
-                  roughnessFactor = mix(roughnessFactor, .16, puddle * .68);
-                  diffuseColor.rgb *= 1. - puddle * .22;
-                }
-              }`)
             .replace('#include <lights_fragment_begin>', THREE.ShaderChunk.lights_fragment_begin.replace(
               'getDirectionalLightInfo( directionalLight, directLight );',
-              'getDirectionalLightInfo( directionalLight, directLight );\n directLight.color *= mlShadow(mlWorld);',
+              'getDirectionalLightInfo( directionalLight, directLight );\n directLight.color *= mlShadow(mlWorld, normalize(mlWorldNormal));',
             ));
         };
         material.customProgramCacheKey = () => oldKey + ':marketline-sun-array';
@@ -247,8 +197,7 @@ class SunShadows {
     });
   }
 
-  draw(scene, view, frame, time) {
-    this.uniforms.mlTime.value = time;
+  draw(scene, view, frame) {
     const r = this.renderer;
     const previousOverride = scene.overrideMaterial;
     scene.overrideMaterial = this.material;
@@ -300,7 +249,7 @@ function halton(index, base) {
 }
 
 export class RenderGraph {
-  constructor(canvas, scene, camera, weaponScene, settings, fixed = false) {
+  constructor(canvas, scene, camera, weaponScene, settings, skyPhoto, fixed = false) {
     const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, powerPreference: 'high-performance' });
     if (!gl) throw new Error('This game needs a browser with hardware-accelerated WebGL2.');
     this.gl = gl;
@@ -339,19 +288,22 @@ export class RenderGraph {
     this.timing = { calls: 0, triangles: 0, scale: 1 };
     this.grade = lutTexture();
     this.shadows = new SunShadows(this.renderer);
-    this.environment = this.hdr ? skyEnvironment(this.renderer) : null;
-    if (this.environment) {
+    this.skyPhoto = skyPhoto;
+    if (this.hdr) {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.environment = pmrem.fromEquirectangular(skyPhoto);
+      pmrem.dispose();
       scene.environment = weaponScene.environment = this.environment.texture;
-      scene.environmentIntensity = .19;
-      weaponScene.environmentIntensity = .34;
+      scene.environmentIntensity = 0.78;
+      weaponScene.environmentIntensity = 0.62;
     }
     this.motionScene = new THREE.Scene();
     this.motionMeshes = [];
 
-    this.sun = new THREE.DirectionalLight(0xffedce, 3.55);
+    this.sun = new THREE.DirectionalLight(0xffe6c6, 4.05);
     this.sun.position.copy(SUN).multiplyScalar(85);
-    this.skyLight = new THREE.HemisphereLight(0xc3dfff, 0x937857, 1.56);
-    scene.fog = new THREE.FogExp2(0xa9b7c0, .0064);
+    this.skyLight = new THREE.HemisphereLight(0xbfd8fc, 0xb6a085, this.hdr ? 0.83 : 1.28);
+    scene.fog = new THREE.FogExp2(0xbfc5c5, .0049);
     scene.add(this.sun, this.skyLight);
     this.weaponSun = new THREE.DirectionalLight(0xffefd7, 2.65);
     this.weaponSky = new THREE.HemisphereLight(0xc6defc, 0x9d7e62, 1.38);
@@ -377,7 +329,7 @@ export class RenderGraph {
     this.triangle.frustumCulled = false;
     this.screen.add(this.triangle);
     this.sky = screenMaterial(S.sky, {
-      inverseVP: this.inverseVP, eye: camera.position, sun: SUN, time: 0, cloudOctaves: 5,
+      inverseVP: this.inverseVP, eye: camera.position, sun: SUN, skyPhoto,
     });
     this.geometry = screenMaterial(S.geometryBuffers, {
       sceneDepth: null, inverseVP: this.inverseVP, previousVP: this.prevVP, view: camera.matrixWorldInverse,
@@ -572,10 +524,10 @@ export class RenderGraph {
     this.inverseVP.copy(this.vp).invert();
     if (!this.valid) this.prevVP.copy(this.vp);
 
-    if (moving || this.shadows.dirty) this.shadows.draw(scene, camera, this.frame, time);
+    if (moving || this.shadows.dirty) this.shadows.draw(scene, camera, this.frame);
     r.setRenderTarget(this.sceneColor);
     r.clearDepth();
-    this.pass(this.sky, this.sceneColor, { time, cloudOctaves: preset.octaves });
+    this.pass(this.sky, this.sceneColor, {});
     r.render(scene, camera);
 
     r.setRenderTarget(this.viewColor);
@@ -669,6 +621,7 @@ export class RenderGraph {
     for (const { previousSkin } of this.motionMeshes) previousSkin?.dispose();
     this.motion.dispose();
     this.environment?.dispose();
+    this.skyPhoto.dispose();
     this.weaponSun.shadow.dispose();
     for (const pass of [this.sky, this.geometry, this.ao, this.temporal, this.bloom, this.exposure, this.tileVelocity, this.composite]) pass.dispose();
     this.triangle.geometry.dispose();

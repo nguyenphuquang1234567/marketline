@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { createScannedMaterial, WORLD_MATERIAL_METERS } from './world-materials.js';
+import { addFacadePier, addPlasterHood, addServiceEntrance, addShopRecess, createFacadeMaterials } from './facade-details.js';
+import { sandbagGeometry } from './sandbag-geometry.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const TAU = Math.PI * 2;
@@ -9,18 +13,12 @@ const DRUM = new THREE.CylinderGeometry(1, 1, 1, 18);
 const POT = new THREE.CylinderGeometry(1, 0.63, 1, 10);
 const ROCK = new THREE.DodecahedronGeometry(1, 0);
 const LEAF = new THREE.SphereGeometry(1, 8, 4);
-const BAG = new THREE.SphereGeometry(1, 12, 6);
-const tireGeometry = new THREE.TorusGeometry(1, 0.3, 7, 16).rotateY(Math.PI / 2);
+const tireGeometry = new THREE.LatheGeometry([
+  [0.209, -0.118], [0.267, -0.127], [0.336, -0.123], [0.373, -0.105],
+  [0.391, -0.069], [0.392, 0.069], [0.374, 0.106], [0.337, 0.122],
+  [0.266, 0.127], [0.209, 0.117],
+].map(([radius, width]) => new THREE.Vector2(radius, width)), 32).rotateZ(Math.PI / 2);
 const vector = (x, y, z) => new THREE.Vector3(x, y, z);
-
-const bagVertices = BAG.getAttribute('position');
-for (let i = 0; i < bagVertices.count; i++) {
-  const x = bagVertices.getX(i);
-  const y = bagVertices.getY(i);
-  const z = bagVertices.getZ(i);
-  bagVertices.setXYZ(i, Math.sign(x) * Math.abs(x) ** 0.78, y, Math.sign(z) * Math.abs(z) ** 0.88);
-}
-BAG.computeVertexNormals();
 
 function seeded(seed) {
   let state = seed >>> 0;
@@ -30,242 +28,20 @@ function seeded(seed) {
   };
 }
 
-function synthesizePBRMaterial(kind, seed, normalScale = 1) {
-  const size = 256;
-  const mask = size - 1;
-  const random = seeded(seed);
-  const noise = new Float32Array(512);
-  for (let i = 0; i < noise.length; i++) noise[i] = random();
-  const sample = (x, y, cells) => {
-    const sx = ((x % size) + size) % size * (cells / size);
-    const sy = ((y % size) + size) % size * (cells / size);
-    const ix = Math.floor(sx);
-    const iy = Math.floor(sy);
-    const fx = sx - ix;
-    const fy = sy - iy;
-    const a = fx * fx * (3 - 2 * fx);
-    const b = fy * fy * (3 - 2 * fy);
-    const n = (i, j) => noise[(((i % cells) + cells) % cells * 73 + ((j % cells) + cells) % cells * 41) & 511];
-    return (n(ix, iy) * (1 - a) + n(ix + 1, iy) * a) * (1 - b) +
-      (n(ix, iy + 1) * (1 - a) + n(ix + 1, iy + 1) * a) * b;
-  };
-  const fbm = (x, y) => sample(x, y, 4) * 0.52 + sample(x, y, 10) * 0.31 + sample(x, y, 24) * 0.17;
-
-  const heightField = new Float32Array(size * size);
-  const albedoCanvas = document.createElement('canvas');
-  albedoCanvas.width = albedoCanvas.height = size;
-  const albedoCtx = albedoCanvas.getContext('2d');
-  const albedoImg = albedoCtx.createImageData(size, size);
-
-  const roughCanvas = document.createElement('canvas');
-  roughCanvas.width = roughCanvas.height = size;
-  const roughCtx = roughCanvas.getContext('2d');
-  const roughImg = roughCtx.createImageData(size, size);
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const broad = sample(x, y, 4);
-      const medium = sample(x, y, 12);
-      const detail = sample(x, y, 28);
-      const grain = random();
-      let r = 212 + (broad - 0.5) * 30 + (detail - 0.5) * 20 + (grain - 0.5) * 18;
-      let g = r - 3;
-      let b = r - 8;
-      let h = (broad - 0.5) * 0.35 + (medium - 0.5) * 0.25 + (detail - 0.5) * 0.2 + (grain - 0.5) * 0.08;
-      let rough = 215;
-
-      if (kind === 'road') {
-        // Cobblestone & compacted bazaar street aggregate with mortar seams
-        const gx = x / 32 + (medium - 0.5) * 0.22;
-        const gy = y / 24 + (broad - 0.5) * 0.22;
-        const row = Math.floor(gy);
-        const cx = gx + (row & 1) * 0.5;
-        const fx = Math.abs((cx - Math.floor(cx)) - 0.5) * 2;
-        const fy = Math.abs((gy - Math.floor(gy)) - 0.5) * 2;
-        const edge = Math.max(fx, fy);
-        const cobble = edge < 0.86 ? Math.sqrt(Math.max(0, 1 - (edge / 0.86) ** 2)) : 0;
-        const stoneHash = noise[((Math.floor(cx) * 59 + row * 97) & 511)];
-        const baseVal = 165 + (stoneHash - 0.5) * 34 + (detail - 0.5) * 32 + (grain - 0.5) * 38;
-        const mortar = edge >= 0.86 ? 1 : 0;
-        r = (baseVal + 6) * (1 - mortar * 0.28);
-        g = (baseVal + 1) * (1 - mortar * 0.29);
-        b = (baseVal - 7) * (1 - mortar * 0.31);
-        if (grain < 0.03) { r -= 42; g -= 42; b -= 42; }
-        if (grain > 0.968) { r += 48; g += 46; b += 40; }
-        h = cobble * 0.58 + (detail - 0.5) * 0.22 + (grain - 0.5) * 0.12 - mortar * 0.45;
-        rough = mortar ? 248 : Math.round(170 + (1 - cobble) * 55 + (1 - stoneHash) * 25);
-      } else if (kind === 'plaster') {
-        // Multi-layered limewash stucco with trowel ridges & weathered flaking
-        const trowel = Math.sin(x * 0.09 + broad * 4.8 + Math.cos(y * 0.07) * 2.2) * 0.5 + 0.5;
-        const flake = broad < 0.23 && medium < 0.38 ? 1 : 0;
-        const baseVal = 212 + (broad - 0.5) * 32 + (trowel - 0.5) * 14 + (detail - 0.5) * 18 + (grain - 0.5) * 16;
-        r = baseVal + 5 - flake * 24;
-        g = baseVal - flake * 28;
-        b = baseVal - 9 - flake * 34;
-        h = broad * 0.35 + trowel * 0.24 + detail * 0.18 - flake * 0.42;
-        rough = flake ? 245 : Math.round(205 + (1 - trowel) * 32);
-      } else if (kind === 'wood') {
-        // Planked timber with annual ring grain, knots & bevel seams
-        const plank = Math.floor(x / 64);
-        const seam = (x % 64) < 3 || (x % 64) > 62 ? 1 : 0;
-        const ring = Math.sin(x * 0.42 + fbm(x * 0.6, y * 0.18) * 9.5 + plank * 2.1);
-        const baseVal = 202 + ring * 16 + (broad - 0.5) * 22 + (grain - 0.5) * 16 - seam * 68;
-        r = baseVal + 10;
-        g = baseVal - 2;
-        b = baseVal - 16;
-        h = ring * 0.18 + detail * 0.14 - seam * 0.65;
-        rough = seam ? 250 : Math.round(168 - ring * 22 + detail * 28);
-      } else if (kind === 'metal') {
-        // Brushed rolled iron/steel with subtle oxidation patina & rivet seams
-        const brush = (sample(x * 4, y * 0.5, 32) - 0.5) * 18;
-        const rustSpot = broad > 0.72 && detail > 0.58 ? (broad - 0.72) * 3.2 : 0;
-        const baseVal = 204 + brush + (detail - 0.5) * 14 - (grain < 0.025 ? 30 : 0);
-        r = baseVal + rustSpot * 38;
-        g = baseVal - rustSpot * 12;
-        b = baseVal - 4 - rustSpot * 28;
-        h = brush * 0.015 + detail * 0.12 - rustSpot * 0.25;
-        rough = Math.round(132 + rustSpot * 95 + Math.abs(brush) * 1.8);
-      } else if (kind === 'cloth') {
-        // Woven burlap & heavy bazaar canvas
-        const warp = Math.sin(x * 1.5708);
-        const weft = Math.sin(y * 1.5708);
-        const weave = (warp * warp + weft * weft) * 0.5;
-        const baseVal = 204 + (weave - 0.5) * 26 + (broad - 0.5) * 24 + (grain - 0.5) * 18;
-        r = baseVal + 4;
-        g = baseVal;
-        b = baseVal - 7;
-        h = weave * 0.38 + broad * 0.18;
-        rough = Math.round(224 + (1 - weave) * 24);
-      } else if (kind === 'brick') {
-        // Hand-laid masonry courses with recessed mortar & per-brick terracotta/ochre tint
-        const row = Math.floor(y / 32);
-        const stagger = (row & 1) * 32;
-        const bx = (x + stagger) % 64;
-        const by = y % 32;
-        const mortar = by < 3 || by > 29 || bx < 3 || bx > 61 ? 1 : 0;
-        const brickId = ((row * 53 + Math.floor((x + stagger) / 64) * 29) & 511);
-        const brickTone = (noise[brickId] - 0.5) * 38;
-        const bevel = Math.min(Math.min(bx, 64 - bx), Math.min(by, 32 - by)) / 6;
-        const brickHeight = mortar ? 0 : Math.min(1, bevel) * (0.75 + noise[(brickId + 17) & 511] * 0.25);
-        const baseVal = mortar ? 142 + (detail - 0.5) * 24 : 206 + brickTone + (detail - 0.5) * 22 + (grain - 0.5) * 18;
-        r = baseVal + (mortar ? -4 : 11);
-        g = baseVal + (mortar ? -3 : -2);
-        b = baseVal + (mortar ? -2 : -13);
-        h = brickHeight * 0.78 + detail * 0.18 - mortar * 0.55;
-        rough = mortar ? 248 : Math.round(192 + (1 - brickHeight) * 38);
-      }
-
-      const idx = y * size + x;
-      heightField[idx] = h;
-      const p = idx * 4;
-      albedoImg.data[p] = Math.max(0, Math.min(255, Math.round(r)));
-      albedoImg.data[p + 1] = Math.max(0, Math.min(255, Math.round(g)));
-      albedoImg.data[p + 2] = Math.max(0, Math.min(255, Math.round(b)));
-      albedoImg.data[p + 3] = 255;
-
-      const rv = Math.max(0, Math.min(255, rough));
-      roughImg.data[p] = rv;
-      roughImg.data[p + 1] = rv;
-      roughImg.data[p + 2] = rv;
-      roughImg.data[p + 3] = 255;
-    }
-  }
-  albedoCtx.putImageData(albedoImg, 0, 0);
-  roughCtx.putImageData(roughImg, 0, 0);
-
-  if (kind === 'plaster' || kind === 'road') {
-    for (let i = 0; i < 28; i++) {
-      let x = 12 + random() * (size - 24);
-      let y = 12 + random() * (size - 24);
-      albedoCtx.beginPath();
-      albedoCtx.moveTo(x, y);
-      for (let s = 0; s < 5; s++) {
-        x += (random() - 0.5) * (kind === 'road' ? 32 : 18);
-        y += (random() - 0.5) * 20;
-        albedoCtx.lineTo(x, y);
-      }
-      albedoCtx.strokeStyle = i % 3 ? '#231c1444' : '#fff3dc66';
-      albedoCtx.lineWidth = 0.6 + random() * 0.85;
-      albedoCtx.stroke();
-    }
-  }
-
-  // Compute tangent-space normal map from heightField using Sobel operator
-  const normCanvas = document.createElement('canvas');
-  normCanvas.width = normCanvas.height = size;
-  const normCtx = normCanvas.getContext('2d');
-  const normImg = normCtx.createImageData(size, size);
-  const strength = 2.4 * normalScale;
-  for (let y = 0; y < size; y++) {
-    const ym = ((y - 1) & mask) * size;
-    const y0 = y * size;
-    const yp = ((y + 1) & mask) * size;
-    for (let x = 0; x < size; x++) {
-      const xm = (x - 1) & mask;
-      const xp = (x + 1) & mask;
-      const dx = (heightField[ym + xp] + 2 * heightField[y0 + xp] + heightField[yp + xp]) -
-                 (heightField[ym + xm] + 2 * heightField[y0 + xm] + heightField[yp + xm]);
-      const dy = (heightField[yp + xm] + 2 * heightField[yp + x] + heightField[yp + xp]) -
-                 (heightField[ym + xm] + 2 * heightField[ym + x] + heightField[ym + xp]);
-      let nx = -dx * strength;
-      let ny = dy * strength;
-      let nz = 1.0;
-      const invLen = 1 / Math.hypot(nx, ny, nz);
-      nx *= invLen;
-      ny *= invLen;
-      nz *= invLen;
-      const p = (y0 + x) * 4;
-      normImg.data[p] = Math.round((nx * 0.5 + 0.5) * 255);
-      normImg.data[p + 1] = Math.round((ny * 0.5 + 0.5) * 255);
-      normImg.data[p + 2] = Math.round((nz * 0.5 + 0.5) * 255);
-      normImg.data[p + 3] = 255;
-    }
-  }
-  normCtx.putImageData(normImg, 0, 0);
-
-  const map = new THREE.CanvasTexture(albedoCanvas);
-  map.colorSpace = THREE.SRGBColorSpace;
-  map.wrapS = map.wrapT = THREE.RepeatWrapping;
-  map.anisotropy = 8;
-
-  const normalMap = new THREE.CanvasTexture(normCanvas);
-  normalMap.colorSpace = THREE.NoColorSpace;
-  normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping;
-  normalMap.anisotropy = 4;
-
-  const roughnessMap = new THREE.CanvasTexture(roughCanvas);
-  roughnessMap.colorSpace = THREE.NoColorSpace;
-  roughnessMap.wrapS = roughnessMap.wrapT = THREE.RepeatWrapping;
-  roughnessMap.anisotropy = 4;
-
-  return { map, normalMap, roughnessMap };
-}
-
 function makeMaterials(seed) {
-  const materials = {};
-  for (const [kind, roughness, metalness, normalStrength] of [
-    ['plaster', 0.88, 0.02, 0.72],
-    ['road', 0.91, 0.03, 0.88],
-    ['wood', 0.76, 0.02, 0.78],
-    ['metal', 0.52, 0.58, 0.55],
-    ['cloth', 0.92, 0.01, 0.65],
-    ['brick', 0.89, 0.02, 1.05],
-  ]) {
-    const { map, normalMap, roughnessMap } = synthesizePBRMaterial(kind, seed++, normalStrength);
-    materials[kind] = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      vertexColors: true,
-      roughness,
-      metalness,
-      map,
-      normalMap,
-      normalScale: new THREE.Vector2(normalStrength * 0.55, normalStrength * 0.55),
-      roughnessMap,
-    });
-  }
+  const materials = Object.fromEntries(
+    Object.keys(WORLD_MATERIAL_METERS).map(kind => [kind, createScannedMaterial(kind)]),
+  );
   materials.flat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04 });
   materials.glass = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.18, metalness: 0.46, emissive: 0x1b2933, emissiveIntensity: 0.28,
+  });
+  materials.enamel = new THREE.MeshPhysicalMaterial({
+    vertexColors: true, roughness: 0.38, metalness: 0.12, clearcoat: 0.5, clearcoatRoughness: 0.28,
+  });
+  materials.rubber = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.84 });
+  materials.autoGlass = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.16, metalness: 0.22, side: THREE.DoubleSide,
   });
   materials.lantern = new THREE.MeshStandardMaterial({
     vertexColors: true, color: 0xffe4a8, roughness: 0.25, metalness: 0.1, emissive: 0xffb85c, emissiveIntensity: 2.1,
@@ -336,8 +112,10 @@ class StaticBatches {
     const n = geometry.getAttribute('normal');
     const uv = geometry.getAttribute('uv');
     const offset = batch.position.length / 3;
-    const fixedUV = material.startsWith('sign') || material === 'stain';
-    const isGround = material === 'road' || material === 'gravel' || material === 'lantern';
+    const fixedUV = material.startsWith('sign') || ['stain', 'mosaic', 'poster'].includes(material);
+    const isGround = ['road', 'asphalt', 'gravel', 'lantern'].includes(material);
+    const meters = WORLD_MATERIAL_METERS[material];
+    const worldUV = ['plaster', 'road', 'asphalt', 'limestone', 'brick', 'shutter'].includes(material);
     const uOffset = fixedUV ? 0 : (x * 0.19 + z * 0.13) % 1;
     const vOffset = fixedUV ? 0 : y * 0.2 % 1;
     for (let i = 0; i < p.count; i++) {
@@ -348,9 +126,22 @@ class StaticBatches {
       this.normVec.fromBufferAttribute(n, i).applyNormalMatrix(this.normal).normalize();
       const nx = this.normVec.x, ny = this.normVec.y, nz = this.normVec.z;
       batch.normal.push(nx, ny, nz);
-      const alongX = geometry === BOX ? (i >= 8 ? sx : sz) / 2.4 : uScale;
-      const alongY = geometry === BOX ? (i >= 8 && i < 16 ? sz : sy) / 2.4 : vScale;
-      batch.uv.push(uv.getX(i) * alongX + uOffset, uv.getY(i) * alongY + vOffset);
+      if (worldUV) {
+        // Match texture scale and phase across adjoining wall pieces and paving strips.
+        if (Math.abs(ny) > 0.55) batch.uv.push(wx / meters[0], -Math.sign(ny) * wz / meters[1]);
+        else if (Math.abs(nz) >= Math.abs(nx)) batch.uv.push(Math.sign(nz) * wx / meters[0], wy / meters[1]);
+        else batch.uv.push(-Math.sign(nx) * wz / meters[0], wy / meters[1]);
+      } else {
+        const alongU = geometry === BOX ? (i >= 8 ? sx : sz) : uScale;
+        const alongV = geometry === BOX ? (i >= 8 && i < 16 ? sz : sy) : vScale;
+        if (material === 'wood' && geometry === BOX && alongU > alongV * 1.35) {
+          batch.uv.push(uv.getY(i) * alongV / meters[0] + uOffset,
+            (1 - uv.getX(i)) * alongU / meters[1] + vOffset);
+        } else {
+          batch.uv.push(uv.getX(i) * alongU / (meters?.[0] ?? 1) + uOffset,
+            uv.getY(i) * alongV / (meters?.[1] ?? 1) + vOffset);
+        }
+      }
 
       // Procedural Vertex Ambient Occlusion & Directional Cavity Shading
       let ao = 1.0;
@@ -378,7 +169,8 @@ class StaticBatches {
       meshGeometry.setIndex(batch.index);
       meshGeometry.computeBoundingSphere();
       const mesh = new THREE.Mesh(meshGeometry, this.materials[batch.material]);
-      mesh.castShadow = !['road', 'glass', 'gravel', 'stain', 'lantern'].includes(batch.material) && !batch.material.startsWith('sign');
+      mesh.castShadow = !['road', 'asphalt', 'glass', 'autoGlass', 'gravel', 'stain', 'lantern', 'mosaic', 'poster'].includes(batch.material)
+        && !batch.material.startsWith('sign');
       mesh.receiveShadow = batch.material !== 'lantern';
       this.scene.add(mesh);
     }
@@ -421,9 +213,9 @@ function signTexture(title, subtitle, background, ink, motif = false) {
   ctx.fillStyle = ink;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = 'bold 53px sans-serif';
+  ctx.font = title === 'THÉ & MENTHE' ? 'bold 49px Georgia, serif' : '800 53px sans-serif';
   ctx.fillText(title, 256, 64, 448);
-  ctx.font = 'bold 23px sans-serif';
+  ctx.font = title === 'THÉ & MENTHE' ? 'bold 29px serif' : 'bold 23px sans-serif';
   ctx.fillText(subtitle, 256, 125, 412);
   if (motif) {
     for (const x of [39, 473]) {
@@ -499,11 +291,13 @@ export function buildWorld(scene, seed = 56103) {
   const materials = makeMaterials(seed);
   const bounds = { minX: -65, maxX: 65, minZ: -64, maxZ: 64 };
   const colliders = [];
+  const assetPlacements = [];
   const windMeshes = [];
   const cables = [];
   const flutter = [];
   const palms = [];
   const batches = new StaticBatches(scene, materials);
+  Object.assign(materials, createFacadeMaterials(seed));
   const palette = [0xd9c39a, 0xe3cbb0, 0xd2a482, 0xaebfc0, 0xcdbaa4, 0xd9b59f, 0xd5cec0];
   const accents = [0x476667, 0x627e83, 0x9e5b42, 0x58746d, 0x79765f, 0x88817a];
   const wallTint = new THREE.Color();
@@ -529,6 +323,7 @@ export function buildWorld(scene, seed = 56103) {
     const s = Math.sin(angle);
     const point = (x, y, z) => vector(cx + x * c + z * s, y, cz - x * s + z * c);
     return {
+      angle,
       p: point,
       box(mat, tint, x, y, z, w, h, d, a = 0) {
         const p = point(x, y, z);
@@ -546,6 +341,9 @@ export function buildWorld(scene, seed = 56103) {
         pipe(point(x, y, z), point(a, b, d), radius, tint, mat, geometry);
       },
     };
+  };
+  const placeAsset = (name, point, yaw) => {
+    assetPlacements.push({ name, x: point.x, y: point.y, z: point.z, yaw });
   };
 
   const signs = [
@@ -602,7 +400,7 @@ export function buildWorld(scene, seed = 56103) {
     cables.push({ mesh, phase: rand() * TAU });
   }
 
-  function facade(frame, width, depth, levels, tint, trim, doors, access, front, sign) {
+  function facade(frame, width, depth, levels, tint, trim, doors, access, front, sign, style) {
     const floorHeight = 3.1;
     const signWidth = 3.81;
     const bandOffset = 0.07;
@@ -642,7 +440,10 @@ export function buildWorld(scene, seed = 56103) {
         const h = openingHeight;
         const center = y + (openingTop + openingBottom) / 2;
         const left = u - w / 2;
-        if (left > edge) wall((edge + left) / 2, center, left - edge, h);
+        if (left > edge) {
+          wall((edge + left) / 2, center, left - edge, h);
+          if (front && floor === 0) addFacadePier(frame, edge, left, face, style, bay);
+        }
         edge = u + w / 2;
         const open = isDoor && access && bay === 0;
         const variant = open ? 0 : isDoor ? (bay % 3 === 0 ? 1 : 2) : Math.floor(rand() * 5);
@@ -652,14 +453,10 @@ export function buildWorld(scene, seed = 56103) {
             frame.body(u, center, face - 0.18, w, h, 0.2, surface);
           }
           frame.box('flat', 0x201d19, u, center, face - 0.34, w + 0.03, h + 0.025, 0.08);
-          frame.box(variant === 4 ? 'glass' : variant === 2 ? 'metal' : 'wood',
+          frame.box(variant === 4 ? 'glass' : variant === 2 ? 'shutter' : 'wood',
             variant === 4 ? 0x435b67 : variant === 2 ? trim : variant === 1 ? shade(trim, 0.54) : 0x292a26,
             u, center, face - 0.275, w - 0.08, h - 0.06, 0.045);
-          if (variant === 2) {
-            for (let slat = 0.08; slat < h; slat += 0.095) {
-              frame.box('metal', shade(trim, 0.62 + 0.29 * (slat / h)), u, center - h / 2 + slat, face - 0.24, w - 0.06, 0.028, 0.043);
-            }
-          } else if (variant === 1 || variant === 3) {
+          if (variant === 1 || variant === 3) {
             for (let k = 0; k < 4; k++) {
               const v = u - w * 0.39 + k * w * 0.26;
               frame.box('metal', 0x373a35, v, center, face - 0.04, 0.027, h - 0.08, 0.036);
@@ -670,16 +467,20 @@ export function buildWorld(scene, seed = 56103) {
             frame.box('wood', 0x716756, u, center, face - 0.21, 0.045, h, 0.045);
             frame.box('wood', 0x716756, u, center + 0.21, face - 0.21, w, 0.045, 0.045);
             frame.box('flat', 0xb2a288, u + w * 0.29, center - h * 0.08, face - 0.237, w * 0.3, h * 0.81, 0.012);
-          } else {
+          } else if (variant === 0) {
             frame.box('wood', trim, u - w * 0.37, center, face + 0.012, w * 0.21, h * 0.91, 0.043, -0.2);
             frame.box('wood', shade(trim, 0.78), u + w * 0.51, center, face + 0.034, w * 0.32, h * 0.92, 0.043, 0.6);
           }
+          if (front && isDoor) addShopRecess(frame, u, center, face, w, h, variant, trim);
         }
         const casing = shade(tint, rand() > 0.3 ? 0.88 : 1.17);
         frame.box('plaster', casing, u, center + h / 2, face + 0.02, w + 0.22, 0.13, 0.18);
         frame.box('plaster', casing, u - w / 2, center, face + 0.027, 0.12, h, 0.19);
         frame.box('plaster', casing, u + w / 2, center, face + 0.027, 0.12, h, 0.19);
         if (!open) frame.box('plaster', shade(tint, 1.1), u, center - h / 2, face + 0.083, w + 0.24, 0.125, 0.34);
+        if (front && floor > 0 && !balcony && style === 'carved') {
+          addPlasterHood(frame, u, center + h / 2, face, w, casing);
+        }
         const streakH = range(0.33, 0.61);
         frame.plate('stain', shade(tint, 0.24), u, center - h / 2 - streakH * 0.5,
           face - 0.001, w * 1.15, streakH);
@@ -710,7 +511,10 @@ export function buildWorld(scene, seed = 56103) {
           frame.pipe(acX - 0.43, acY - 0.23, face + 0.31, acX - 0.43, acY + 0.78, face + 0.055, 0.022, 0x5b5c50);
         }
       }
-      if (edge < width / 2) wall((edge + width / 2) / 2, centerHeight(y, openingBottom, openingTop), width / 2 - edge, openingHeight);
+      if (edge < width / 2) {
+        wall((edge + width / 2) / 2, centerHeight(y, openingBottom, openingTop), width / 2 - edge, openingHeight);
+        if (front && floor === 0) addFacadePier(frame, edge, width / 2, face, style, bays);
+      }
       const band = floor === levels - 1 ? shade(tint, 1.13) : shade(tint, 0.91);
       const bandY = y + floorHeight - bandOffset;
       if (floor === 0 && sign) {
@@ -727,11 +531,17 @@ export function buildWorld(scene, seed = 56103) {
     }
 
     if (sign) {
-      const signY = floorHeight - bandOffset;
-      const boardDepth = 0.12;
-      const wallFace = depth / 2;
-      frame.box('wood', 0x74614b, sign.u, signY, wallFace + boardDepth / 2, signWidth, 0.76, boardDepth);
-      frame.plate('sign' + sign.style, 0xffffff, sign.u, signY, wallFace + boardDepth + 0.003, signWidth - 0.10, 0.68);
+      const signY = 3.13;
+      const boardFront = face + 0.24;
+      for (const offset of [-0.34, 0.34]) {
+        frame.box('metal', 0x574d43, sign.u + signWidth * offset, signY, face + 0.075, 0.078, 0.43, 0.17);
+      }
+      frame.box('wood', 0x65523d, sign.u, signY, boardFront - 0.054, signWidth, 0.72, 0.108);
+      frame.plate('sign' + sign.style, 0xffffff, sign.u, signY, boardFront + 0.003, signWidth - 0.08, 0.66);
+      for (const offset of [-1, 1]) {
+        frame.box('metal', 0x7a6b52, sign.u, signY + offset * 0.347, boardFront - 0.008, signWidth - 0.04, 0.028, 0.026);
+        frame.box('metal', 0x6d5b45, sign.u + offset * (signWidth / 2 - 0.012), signY, boardFront - 0.008, 0.024, 0.66, 0.026);
+      }
     }
     if (front || rand() < 0.4) {
       const u = width / 2 - 0.24;
@@ -748,8 +558,12 @@ export function buildWorld(scene, seed = 56103) {
       const y = pick([range(0.07, 0.35), levels * 3.1 - range(0.16, 0.43), pick([2.72, 5.88, 8.99])]);
       if (y > levels * 3.1) continue;
       const patch = range(0.055, 0.18);
-      frame.plate(rand() < 0.18 ? 'brick' : 'plaster', shade(tint, range(0.57, 0.81)), u, y, face - 0.001, range(0.11, 0.48), patch);
-      frame.plate('plaster', shade(tint, 1.15), u, y + patch / 2, face - 0.0004, range(0.09, 0.21), 0.018);
+      const tintFactor = rand() < 0.18 ? 0.79 : 0.91;
+      const weathering = range(0.57, 0.81);
+      const patchWidth = range(0.11, 0.48);
+      const stainWidth = range(0.09, 0.21);
+      frame.plate('stain', shade(tint, weathering * tintFactor), u, y, face - 0.001, patchWidth, patch);
+      if (y < 0.36) frame.plate('stain', shade(tint, 0.46), u, y + patch / 2, face - 0.0004, stainWidth, 0.075);
     }
   }
 
@@ -757,9 +571,7 @@ export function buildWorld(scene, seed = 56103) {
 
   function building(x, z, width, depth, angle, levels, tint, options = {}) {
     const f = local(x, z, angle);
-    f.angle = angle;
     const rear = local(x, z, angle + Math.PI);
-    rear.angle = angle + Math.PI;
     const access = Boolean(options.access);
     const trim = options.trim ?? pick(accents);
     const top = levels * 3.1;
@@ -773,6 +585,7 @@ export function buildWorld(scene, seed = 56103) {
       }
       const sidePoint = f.p(side * (width * 0.5 + 0.022), 0, 0);
       const end = local(sidePoint.x, sidePoint.z, angle + side * Math.PI / 2);
+      if (options.service) addServiceEntrance(end, depth, shade(trim, 0.86), shade(tint, 0.8), side > 0);
       for (const windowX of [-0.29 * depth, 0.18 * depth]) {
         for (let level = 0; level < levels; level++) {
           const y = 1.89 + level * 3.1;
@@ -810,8 +623,12 @@ export function buildWorld(scene, seed = 56103) {
     }
     const signage = options.sign ?? -1;
     const sign = signage >= 0 ? { style: signage, u: options.signOffset ?? width * 0.13 } : null;
-    facade(f, width, depth, levels, tint, trim, true, access, true, sign);
-    facade(rear, width, depth, levels, shade(tint, 0.94), trim, true, access && options.through, false, null);
+    const style = options.style ?? (Math.round(Math.abs(x * 0.27 + z * 0.42)) % 3 === 0 ? 'carved' : 'render');
+    facade(f, width, depth, levels, tint, trim, true, access, true, sign, style);
+    facade(rear, width, depth, levels, shade(tint, 0.94), trim, true, access && options.through, false, null, 'service');
+    if (options.streetFront) {
+      placeAsset('ShopLantern', f.p(-width / 2 + 0.48, 3.71, depth / 2 + 0.006), angle);
+    }
     if (options.sign === 0 || options.sign === 1 || options.sign === 2) {
       const u = options.hangingSignOffset ?? -width * 0.31;
       const anchor = f.p(u, 3.65, depth / 2 + 0.64);
@@ -985,8 +802,7 @@ export function buildWorld(scene, seed = 56103) {
         const width = range(0.344, 0.376);
         const depth = range(0.248, 0.284);
         const rotation = angle + range(-0.14, 0.14);
-        round(BAG, 'cloth', c, p.x, p.y, p.z, width, range(0.135, 0.157), depth, rotation);
-        round(BAG, 'cloth', shade(c, 0.84), p.x, p.y - 0.006, p.z, width * 1.007, 0.021, depth * 1.012, rotation);
+        round(sandbagGeometry, 'cloth', c, p.x, p.y, p.z, width, range(0.135, 0.157), depth, rotation);
       }
     }
     f.body(0, tiers * 0.111, 0, length * 0.61 + 0.15, tiers * 0.222, 0.54, 'fabric');
@@ -1016,7 +832,7 @@ export function buildWorld(scene, seed = 56103) {
     f.body(0, 0.449, 0, length, 0.898, 0.75);
   }
 
-  function stall(x, z, angle, style, width = 3.8, depth = 2.3) {
+  function stall(x, z, angle, style, width = 3.8, depth = 2.3, detailed = false) {
     const f = local(x, z, angle);
     const wood = pick([0x8b7456, 0x775e45, 0x9e805b]);
     for (const u of [-width / 2, width / 2]) {
@@ -1039,12 +855,17 @@ export function buildWorld(scene, seed = 56103) {
       const u = width * (j / 4 - 0.385);
       const p = f.p(u, 0.956, tableZ + range(-0.22, 0.23));
       if (j === 0 || j === 2) {
-        crate(p.x, p.y, p.z, width * 0.185, 0.144, 0.51, angle + range(-0.15, 0.15), 0x9b8159, false);
+        const crateAngle = angle + range(-0.15, 0.15);
+        if (detailed) placeAsset('ProduceCrate', p, crateAngle);
+        else crate(p.x, p.y, p.z, width * 0.185, 0.144, 0.51, crateAngle, 0x9b8159, false);
         for (let i = 0; i < 11; i++) {
           const item = f.p(u + range(-width * 0.07, width * 0.07), 1.118, tableZ + range(-0.2, 0.2));
-          round(LEAF, 'flat', pick(j === 0 ? [0x876b3e, 0xba864c, 0xa46b45] : [0x7a7b50, 0x8f8a58, 0x6a754b]),
-            item.x, item.y, item.z, range(0.041, 0.069), range(0.034, 0.057), range(0.039, 0.062));
+          const color = pick(j === 0 ? [0x876b3e, 0xba864c, 0xa46b45] : [0x7a7b50, 0x8f8a58, 0x6a754b]);
+          const size = vector(range(0.041, 0.069), range(0.034, 0.057), range(0.039, 0.062));
+          if (!detailed) round(LEAF, 'flat', color, item.x, item.y, item.z, size.x, size.y, size.z);
         }
+      } else if (detailed) {
+        placeAsset('DateBasket', p, angle + j * 0.071);
       } else {
         round(POT, 'plaster', 0x946341, p.x, p.y + 0.09, p.z, 0.21, 0.18, 0.21);
         round(PIPE, 'wood', 0x624b34, p.x, p.y + 0.191, p.z, 0.18, 0.019, 0.18);
@@ -1055,37 +876,118 @@ export function buildWorld(scene, seed = 56103) {
 
   function pickup(x, z, angle, color) {
     const f = local(x, z, angle);
-    f.box('metal', 0x575754, 0, 0.61, 0, 1.74, 0.4, 4.52);
-    f.box('metal', color, 0, 0.87, 0.05, 1.86, 0.39, 4.36);
-    f.box('metal', color, 0, 1.05, 1.48, 1.82, 0.29, 1.36);
-    f.box('metal', shade(color, 1.09), 0, 1.204, 1.49, 1.79, 0.045, 1.31);
-    f.box('metal', 0x655f52, 0, 0.72, 2.22, 1.96, 0.145, 0.15);
-    f.box('metal', 0x60645b, 0, 1.01, 2.224, 0.98, 0.19, 0.045);
-    for (let i = -3; i <= 3; i++) f.box('metal', 0x8b8879, i * 0.136, 1.013, 2.253, 0.042, 0.154, 0.016);
-    f.box('metal', shade(color, 1.1), 0, 1.87, 0.34, 1.74, 0.14, 1.37);
-    f.box('glass', 0x45585a, 0, 1.55, 1.027, 1.57, 0.55, 0.037);
-    f.box('glass', 0x4f6060, 0, 1.56, -0.333, 1.52, 0.5, 0.037);
-    f.box('metal', shade(color, 1.07), 0, 1.24, 1.04, 1.78, 0.089, 0.16);
-    f.box('metal', shade(color, 0.78), 0, 0.795, -1.45, 1.69, 0.069, 1.31);
-    f.box('metal', color, 0, 0.99, -2.12, 1.83, 0.44, 0.096);
-    f.box('metal', 0x635b4e, 0, 0.61, -2.22, 1.92, 0.108, 0.13);
+    const paint = shade(color, 0.88);
+    const bright = shade(color, 1.12);
+    const rubber = 0x353632;
+    const seal = 0x3b3b35;
+    const glass = 0x4d5a59;
+    const axles = [-1.37, 1.33];
+    const wheelY = 0.392;
+    const rounded = (material, tint, u, y, v, w, h, d, radius) => {
+      const geometry = new RoundedBoxGeometry(w, h, d, 2, radius);
+      const point = f.p(u, y, v);
+      batches.add(geometry, material, tint, point.x, point.y, point.z, 1, 1, 1, angle);
+      geometry.dispose();
+    };
+    const sheet = (material, tint, corners) => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(corners.flat(), 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+      geometry.setIndex([0, 1, 2, 0, 2, 3]);
+      geometry.computeVertexNormals();
+      batches.add(geometry, material, tint, x, 0, z, 1, 1, 1, angle);
+      geometry.dispose();
+    };
+
+    // Narrow inner chassis leaves room for recessed tire wells in the outer panels.
+    rounded('rubber', 0x4c4b43, 0, 0.52, 0.02, 1.21, 0.28, 4.30, 0.045);
+    rounded('enamel', paint, 0, 0.91, 0.02, 1.66, 0.30, 4.29, 0.075);
+    rounded('enamel', bright, 0, 1.125, 1.53, 1.69, 0.18, 1.34, 0.074);
+    rounded('enamel', paint, 0, 1.1, -2.13, 1.76, 0.28, 0.14, 0.037);
+    rounded('metal', 0x635f54, 0, 0.682, -2.205, 1.87, 0.137, 0.19, 0.048);
+    rounded('metal', 0x6e6960, 0, 0.691, 2.205, 1.94, 0.16, 0.21, 0.048);
+    rounded('rubber', seal, 0, 0.989, 2.185, 1.17, 0.232, 0.082, 0.028);
+    for (let row = 0; row < 5; row++) {
+      f.box('metal', 0x74766b, 0, 0.913 + row * 0.039, 2.23, 1.105, 0.014, 0.028);
+    }
+    f.box('metal', 0x8d8a80, 0, 0.989, 2.247, 0.13, 0.066, 0.012);
+    f.box('flat', 0xc2b899, 0.06, 0.69, 2.321, 0.316, 0.104, 0.013);
+    f.box('flat', 0xc2b899, 0.08, 0.83, -2.217, 0.316, 0.104, 0.013);
     for (const side of [-1, 1]) {
-      f.box('metal', color, side * 0.862, 0.997, -1.42, 0.13, 0.41, 1.41);
-      f.box('metal', color, side * 0.858, 1.13, 0.333, 0.11, 0.47, 1.34);
-      f.box('glass', 0x536664, side * 0.859, 1.574, 0.323, 0.056, 0.441, 1.14);
-      f.box('metal', shade(color, 0.86), side * 0.86, 1.565, 0.95, 0.102, 0.59, 0.125);
-      f.box('metal', shade(color, 0.86), side * 0.86, 1.565, -0.293, 0.102, 0.59, 0.119);
-      f.box('metal', 0x5a584e, side * 0.934, 1.277, -0.13, 0.037, 0.034, 0.154);
-      f.box('metal', color, side * 1.04, 1.427, 0.925, 0.212, 0.118, 0.135);
-      f.box('glass', 0xbbad83, side * 0.69, 1.054, 2.219, 0.292, 0.165, 0.039);
-      f.box('glass', 0x9e4936, side * 0.762, 0.98, -2.18, 0.126, 0.196, 0.038);
-      for (const axle of [-1.37, 1.33]) {
-        const p = f.p(side * 0.884, 0.414, axle);
-        round(tireGeometry, 'flat', 0x33332e, p.x, p.y, p.z, 0.45, 0.319, 0.319, angle);
-        f.pipe(side * 0.82, 0.414, axle, side * 1.019, 0.414, axle, 0.201, 0x666660, 'metal', DRUM);
-        f.pipe(side * 1.018, 0.414, axle, side * 1.032, 0.414, axle, 0.104, 0x55554b, 'metal', DRUM);
+      rounded('autoGlass', 0xbfb8a0, side * 0.71, 1.018, 2.177, 0.295, 0.165, 0.109, 0.03);
+      rounded('enamel', 0x9d4a30, side * 0.838, 0.949, -2.157, 0.122, 0.225, 0.099, 0.019);
+      f.box('flat', 0xb6a37b, side * 0.839, 0.981, -2.211, 0.082, 0.041, 0.01);
+      f.box('flat', 0xb68b4c, side * 0.911, 1.018, 1.988, 0.015, 0.037, 0.113);
+    }
+
+    const fender = new THREE.Shape();
+    fender.moveTo(-2.16, 0.49);
+    for (const axle of axles) {
+      for (let step = 0; step <= 12; step++) {
+        const arc = Math.PI - 0.225 - (Math.PI - 0.45) * step / 12;
+        fender.lineTo(axle + Math.cos(arc) * 0.432, wheelY + Math.sin(arc) * 0.432);
       }
     }
+    fender.lineTo(2.12, 0.49);
+    fender.lineTo(2.15, 1.116);
+    fender.lineTo(1.86, 1.16);
+    fender.lineTo(1.07, 1.185);
+    fender.lineTo(-0.3, 1.245);
+    fender.lineTo(-0.48, 1.109);
+    fender.lineTo(-2.15, 1.109);
+    fender.closePath();
+    const bodyPanel = new THREE.ExtrudeGeometry(fender, {
+      depth: 0.09, steps: 1, bevelEnabled: true, bevelSize: 0.025, bevelThickness: 0.021, bevelSegments: 2,
+    });
+    bodyPanel.translate(0, 0, -0.045).rotateY(-Math.PI / 2);
+
+    // The roof, A-pillars and sloping glazing form one cab rather than a box on the hood.
+    rounded('enamel', bright, 0, 1.854, 0.274, 1.596, 0.131, 1.253, 0.061);
+    const frontLow = [[-0.769, 1.245, 1.049], [0.769, 1.245, 1.049]];
+    const frontHigh = [[0.737, 1.8, 0.845], [-0.737, 1.8, 0.845]];
+    sheet('rubber', seal, [...frontLow, ...frontHigh]);
+    sheet('autoGlass', glass, [[-0.726, 1.277, 1.041], [0.726, 1.277, 1.041],
+      [0.696, 1.769, 0.863], [-0.696, 1.769, 0.863]]);
+    sheet('autoGlass', shade(glass, 0.85), [[0.702, 1.269, -0.38], [-0.702, 1.269, -0.38],
+      [-0.702, 1.782, -0.333], [0.702, 1.782, -0.333]]);
+    for (const [u, end] of [[-0.71, -0.14], [0.05, 0.67]]) {
+      f.pipe(u, 1.288, 1.048, end, 1.332, 1.032, 0.013, 0x363733, 'rubber');
+    }
+    rounded('rubber', 0x4f493d, 0, 0.968, -1.339, 1.594, 0.066, 1.49, 0.025);
+    for (let slat = -6; slat <= 6; slat++) {
+      f.box('metal', 0x59574b, slat * 0.119, 1.008, -1.34, 0.026, 0.016, 1.46);
+    }
+
+    for (const side of [-1, 1]) {
+      const panel = f.p(side * 0.836, 0, 0);
+      batches.add(bodyPanel, 'enamel', paint, panel.x, panel.y, panel.z, 1, 1, 1, angle);
+      rounded('enamel', bright, side * 0.851, 1.122, -1.36, 0.134, 0.071, 1.53, 0.033);
+      f.box('rubber', seal, side * 0.905, 0.791, 0.342, 0.018, 0.018, 1.316);
+      f.box('rubber', seal, side * 0.905, 1.008, -0.331, 0.016, 0.42, 0.017);
+      f.box('enamel', shade(color, 0.79), side * 0.92, 1.143, -0.117, 0.035, 0.052, 0.17);
+      f.pipe(side * 0.812, 1.215, 1.059, side * 0.767, 1.852, 0.834, 0.055, color, 'enamel');
+      f.pipe(side * 0.803, 1.219, -0.406, side * 0.763, 1.855, -0.325, 0.073, color, 'enamel');
+      sheet('autoGlass', glass, [[side * 0.81, 1.25, -0.389], [side * 0.825, 1.25, 0.999],
+        [side * 0.768, 1.799, 0.812], [side * 0.768, 1.799, -0.326]]);
+      f.pipe(side * 0.82, 1.256, 0.224, side * 0.773, 1.805, 0.215, 0.024, seal, 'rubber');
+      f.pipe(side * 0.852, 1.37, 0.791, side * 1.027, 1.418, 0.824, 0.028, seal, 'rubber');
+      rounded('enamel', bright, side * 1.046, 1.442, 0.825, 0.193, 0.123, 0.125, 0.037);
+      f.box('autoGlass', 0x737871, side * 1.047, 1.449, 0.758, 0.146, 0.074, 0.015);
+      for (const axle of axles) {
+        const p = f.p(side * 0.886, wheelY, axle);
+        round(tireGeometry, 'rubber', rubber, p.x, p.y, p.z, 1, 1, 1, angle);
+        f.pipe(side * 0.777, wheelY, axle, side * 1.005, wheelY, axle, 0.227, 0x77756d, 'metal', DRUM);
+        f.pipe(side * 1.003, wheelY, axle, side * 1.017, wheelY, axle, 0.182, 0x4c4e47, 'metal', DRUM);
+        f.pipe(side * 1.01, wheelY, axle, side * 1.031, wheelY, axle, 0.082, 0x77786e, 'metal', DRUM);
+        for (let lug = 0; lug < 6; lug++) {
+          const a = lug * TAU / 6;
+          const yy = wheelY + Math.sin(a) * 0.127;
+          const zz = axle + Math.cos(a) * 0.127;
+          f.pipe(side * 1.013, yy, zz, side * 1.023, yy, zz, 0.018, 0x9a978b);
+        }
+      }
+    }
+    bodyPanel.dispose();
     f.body(0, 0.63, 0, 1.86, 1.26, 4.39, 'metal');
     f.body(0, 1.55, 0.34, 1.73, 0.64, 1.39, 'metal');
   }
@@ -1114,7 +1016,7 @@ export function buildWorld(scene, seed = 56103) {
       }
       const shape = new THREE.Shape(points);
       const geometry = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false });
-      batches.add(geometry, 'plaster', tint, 0, 0, zz - thickness / 2, 1, 1, 1, 0, 0.48, 0.48);
+      batches.add(geometry, 'limestone', tint, 0, 0, zz - thickness / 2, 1, 1, 1);
       geometry.dispose();
     }
     voussoir(0, Math.PI, radius + 0.016, outer - 0.009, depth - 0.045, z, 0x8f7b63);
@@ -1136,16 +1038,16 @@ export function buildWorld(scene, seed = 56103) {
     fillShape.lineTo(pierOuter, spring);
     fillShape.lineTo(outer, spring);
     const fill = new THREE.ExtrudeGeometry(fillShape, { depth: depth - 0.13, bevelEnabled: false, curveSegments: 14 });
-    batches.add(fill, 'plaster', 0xc1ac90, 0, 0, z - (depth - 0.13) / 2, 1, 1, 1, 0, 0.55, 0.55);
+    batches.add(fill, 'limestone', 0xc1ac90, 0, 0, z - (depth - 0.13) / 2, 1, 1, 1);
     fill.dispose();
     for (const s of [-1, 1]) {
       const x = s * (radius + pierOuter) / 2;
       const width = pierOuter - radius;
       for (let course = 0; course < 7; course++) {
         const y = (course + 0.5) * spring / 7;
-        box('plaster', pick(colors), x, y, z, width + (course < 1 ? 0.26 : 0), spring / 7 - 0.017, depth + (course === 0 ? 0.26 : 0));
+        box('limestone', pick(colors), x, y, z, width + (course < 1 ? 0.26 : 0), spring / 7 - 0.017, depth + (course === 0 ? 0.26 : 0));
         for (const face of [-1, 1]) {
-          box('plaster', pick(colors), x + s * (course % 2 - 0.5) * 0.76, y, z + face * (depth / 2 + 0.008), 0.026, spring / 7 - 0.023, 0.032);
+          box('limestone', pick(colors), x + s * (course % 2 - 0.5) * 0.76, y, z + face * (depth / 2 + 0.008), 0.026, spring / 7 - 0.023, 0.032);
         }
       }
       box('plaster', 0xcab393, x, 4.39, z, width + 0.27, 0.145, depth + 0.33);
@@ -1171,7 +1073,7 @@ export function buildWorld(scene, seed = 56103) {
       [9.86, 14.9, 2.92, 0.13, 0xa69278], [10.01, 15.04, 3.07, 0.17, 0xcdb99a],
       [10.33, 15.26, 3.2, 0.41, 0xdbbf99], [10.58, 15.45, 3.29, 0.12, 0xbaa384],
       [10.72, 15.61, 3.37, 0.14, 0xd1b99a],
-    ]) box('plaster', tint, 0, yy, z, w, h, d);
+    ]) box('limestone', tint, 0, yy, z, w, h, d);
     for (let i = -6; i <= 6; i++) {
       box('plaster', i % 2 ? 0xb9a07e : 0xc9b28f, i * 1.137, 10.98, z, 0.67, 0.51, 2.74);
       box('plaster', 0xcebc9b, i * 1.137, 11.26, z, 0.75, 0.1, 2.83);
@@ -1187,9 +1089,9 @@ export function buildWorld(scene, seed = 56103) {
   }
 
   // The side streets remain navigable as three loops around the central road.
-  box('road', 0xaba088, 0, -0.076, 0, 172, 0.12, 175);
+  box('asphalt', 0xaba088, 0, -0.076, 0, 172, 0.12, 175);
   box('road', 0x8a8374, 0, -0.024, 0, 12.9, 0.035, 136);
-  for (const x of [-30.4, 29.2]) box('road', 0x9a8f7b, x, -0.022, 0, 7.8, 0.032, 128);
+  for (const x of [-30.4, 29.2]) box('asphalt', 0x9a8f7b, x, -0.022, 0, 7.8, 0.032, 128);
   for (const z of [-57, -42, -21, -3.8, 15.5, 33.8, 55]) {
     box('road', 0x9b927e, 0, -0.017, z, 121, 0.023, z === -57 || z === 55 ? 7.1 : 4.2);
   }
@@ -1224,8 +1126,8 @@ export function buildWorld(scene, seed = 56103) {
       const crossing = [-42, -21, -3.8, 15.5, 33.8, 55].some(center => Math.abs(z - center) < 2.25);
       if (crossing) continue;
       const tone = pick([0xa59a82, 0xb3a68d, 0xa99c84, 0xa69881, 0xb4a78f]);
-      box('plaster', tone, x + side * 0.43, 0.021, z, 1.72, 0.083, 1.043);
-      box('plaster', shade(tone, 0.85), x - side * 0.483, 0.04, z, 0.142, 0.115, 1.037);
+      box('limestone', tone, x + side * 0.43, 0.021, z, 1.72, 0.083, 1.043);
+      box('limestone', shade(tone, 0.85), x - side * 0.483, 0.04, z, 0.142, 0.115, 1.037);
       if (i % 12 === 4) {
         box('metal', 0x514e43, x - side * 0.55, 0.006, z, 0.4, 0.023, 0.71);
         for (let j = 0; j < 10; j++) box('metal', 0x787465, x - side * 0.55, 0.021, z - 0.3 + j * 0.066, 0.35, 0.012, 0.025);
@@ -1236,13 +1138,13 @@ export function buildWorld(scene, seed = 56103) {
   const frontages = [
     // Offsets place the signs over bays with a clear view from the street.
     { z: 44.4, width: 17.8, left: 0xd1b78e, right: 0xb5c5c2, deep: 13.0,
-      west: { sign: 0, signOffset: -1.42, hangingSignOffset: -1.42, lamp: true },
-      east: { sign: 1, signOffset: 2.65, hangingSignOffset: 2.25, lamp: true } },
+      west: { sign: 0, signOffset: -1.42, hangingSignOffset: -1.42, lamp: true, style: 'tiled' },
+      east: { sign: 1, signOffset: 2.65, hangingSignOffset: 2.25, lamp: true, style: 'tiled' } },
     { z: 24.2, width: 13.9, left: 0xe4c3a5, right: 0xc7b38b, deep: 14.0,
-      west: { sign: 3, signOffset: -3.4, access: true },
-      east: { sign: 2, signOffset: -0.28, hangingSignOffset: -2.70 } },
+      west: { sign: 3, signOffset: -3.4, access: true, style: 'carved' },
+      east: { sign: 2, signOffset: -0.28, hangingSignOffset: -2.70, style: 'workshop' } },
     { z: 5.75, width: 14.8, left: 0xcbb6a2, right: 0xe1c8a9, deep: 12.5,
-      west: { access: true, through: true, lamp: true }, east: { sign: 5, signOffset: -0.35, access: true } },
+      west: { access: true, through: true, lamp: true, style: 'workshop' }, east: { sign: 5, signOffset: -0.35, access: true, style: 'tiled' } },
     { z: -12.2, width: 13.5, left: 0xb0c0c1, right: 0xcd9c83, deep: 13.3, west: {}, east: { access: true, through: true, lamp: true } },
     { z: -28.2, width: 10.25, left: 0xd2ba97, right: 0xe0c3a3, deep: 13.0, west: { lamp: true }, east: {} },
     { z: -49.2, width: 10.5, left: 0xcebda5, right: 0xa7b6af, deep: 11.5, west: {}, east: { sign: 3, signOffset: -1.0 } },
@@ -1250,16 +1152,16 @@ export function buildWorld(scene, seed = 56103) {
   for (let i = 0; i < frontages.length; i++) {
     const f = frontages[i];
     building(-8.1 - f.deep / 2, f.z, f.width, f.deep, Math.PI / 2,
-      i === 0 || i === 3 ? 3 : 2, f.left, { trim: i === 0 ? 0x577e7e : undefined, ...f.west });
+      i === 0 || i === 3 ? 3 : 2, f.left, { streetFront: true, trim: i === 0 ? 0x577e7e : undefined, ...f.west });
     const depth = f.deep + (i % 2 ? 0.8 : -0.8);
     building(8.15 + depth / 2, f.z + (i % 2 ? 0.56 : -0.55), f.width - 0.55, depth, -Math.PI / 2,
-      i === 0 || i === 2 || i === 4 ? 3 : 2, f.right, { trim: i === 0 ? 0x668385 : undefined, ...f.east });
+      i === 0 || i === 2 || i === 4 ? 3 : 2, f.right, { streetFront: true, trim: i === 0 ? 0x668385 : undefined, ...f.east });
   }
   for (const side of [-1, 1]) {
     for (const [i, z, width] of [[0, 46, 16], [1, 23.5, 15], [2, 5.3, 12.9], [3, -13.3, 13], [4, -29.5, 12.1], [5, -49, 12]]) {
       const d = range(13.2, 16.7);
       building(side * (34.6 + d / 2), z + side * range(-0.8, 0.8), width + range(-1.1, 1), d,
-        -side * Math.PI / 2, i % 3 === 1 ? 3 : 2, pick(palette), { lamp: i % 2 === 0 });
+        -side * Math.PI / 2, i % 3 === 1 ? 3 : 2, pick(palette), { lamp: i % 2 === 0, service: true, style: 'workshop' });
       if (i % 2 === 1) building(side * 56.7, z + 1.9, width * 0.87, 7.7,
         -side * Math.PI / 2, 2, pick(palette));
     }
@@ -1315,11 +1217,11 @@ export function buildWorld(scene, seed = 56103) {
     [-5.62, -18.62, Math.PI / 2, 2, 3.6, 2.2],
     [-26.9, 8.7, -Math.PI / 2, 0, 4.1, 2.54],
     [26.57, -17.14, Math.PI / 2, 2, 3.7, 2.72],
-  ]) stall(x, z, angle, style, w, d);
+  ]) stall(x, z, angle, style, w, d, Math.abs(x) < 8);
 
   awning(vector(-8.01, 3.08, 50), Math.PI / 2, 4.04, 1.93, 3);
-  awning(vector(8.07, 3.16, 42.1), -Math.PI / 2, 4.39, 2.02, 0);
-  awning(vector(8.0, 3.18, -44.83), -Math.PI / 2, 3.15, 1.87, 1);
+  awning(vector(8.07, 2.65, 42.1), -Math.PI / 2, 4.39, 2.02, 0);
+  awning(vector(8.0, 2.65, -44.83), -Math.PI / 2, 3.15, 1.87, 1);
   awning(vector(-8.1, 3.12, -46.7), Math.PI / 2, 3.4, 1.82, 2);
 
   for (const [x, z, a, n, tiers] of [
@@ -1426,7 +1328,7 @@ export function buildWorld(scene, seed = 56103) {
   stairs.box('plaster', 0xb29d80, 0, 2.51, -4.47, 2.14, 1.1, 0.16);
   stairs.body(0, 2.51, -4.47, 2.14, 1.1, 0.16);
 
-  // AAA Bazaar Architectural Set-Dressing (isolated PRNG preserves all collider/bot determinism)
+  // Street ornament uses its own random state so placement cannot move the colliders.
   const detailRand = seeded(seed ^ 0x9e3779b9);
   const dRange = (lo, hi) => lo + (hi - lo) * detailRand();
   const dPick = list => list[Math.floor(detailRand() * list.length)];
@@ -1446,25 +1348,15 @@ export function buildWorld(scene, seed = 56103) {
     }
   }
 
-  // 2. Wrought-iron bazaar street lanterns & arch sconces with warm glowing cores
-  const addLantern = (lx, ly, lz, wallSide = 0) => {
-    if (wallSide !== 0) {
-      box('metal', 0x3e4039, lx - wallSide * 0.24, ly + 0.18, lz, 0.48, 0.045, 0.045);
-      box('metal', 0x3e4039, lx - wallSide * 0.38, ly + 0.02, lz, 0.24, 0.28, 0.035);
-    }
+  const addArchLantern = (lx, ly, lz) => {
     round(PIPE, 'metal', 0x3a3b35, lx, ly + 0.16, lz, 0.018, 0.16, 0.018);
     round(POT, 'metal', 0x383a33, lx, ly + 0.05, lz, 0.14, 0.08, 0.14);
     round(DRUM, 'lantern', 0xffe4a8, lx, ly - 0.07, lz, 0.105, 0.20, 0.105);
     round(POT, 'metal', 0x383a33, lx, ly - 0.19, lz, 0.09, 0.06, 0.09);
   };
-  for (const z of [44.2, 31.5, 16.8, 3.2, -11.4, -26.5, -45.8]) {
-    addLantern(-7.52, 3.55, z, 1);
-    addLantern(7.52, 3.55, z - 1.2, -1);
-  }
-  // Archway lanterns
   for (const s of [-1, 1]) {
-    addLantern(s * 3.85, 5.15, -33.35, 0);
-    addLantern(s * 3.85, 5.15, -36.25, 0);
+    addArchLantern(s * 3.85, 5.15, -33.35);
+    addArchLantern(s * 3.85, 5.15, -36.25);
   }
 
   // 3. Stone flagstone runners & archway threshold bands along the bazaar spine
@@ -1481,17 +1373,13 @@ export function buildWorld(scene, seed = 56103) {
     box('plaster', 0x9c8b72, 0, -0.005, zBand + 0.72, 8.3, 0.023, 0.14);
   }
 
-  // 4. Terracotta amphorae, woven carpets & copper vessels beside stalls and walls
+  // Terracotta jars beside the market stalls.
   for (const [ax, az] of [
     [-6.25, 42.8], [6.35, 39.9], [-6.18, 30.8], [6.28, 28.1],
     [-6.22, 21.2], [6.15, 11.6], [-6.12, 6.9], [6.22, -5.8],
     [-6.15, -17.1], [-4.85, -33.1], [4.85, -36.4],
   ]) {
-    const vaseTint = dPick([0xa86844, 0x965a38, 0xb57a52, 0x8c5538]);
-    const hScale = dRange(0.34, 0.48);
-    round(POT, 'plaster', vaseTint, ax, hScale * 0.45, az, hScale * 0.46, hScale * 0.9, hScale * 0.46);
-    round(PIPE, 'plaster', shade(vaseTint, 0.86), ax, hScale * 0.98, az, hScale * 0.24, hScale * 0.22, hScale * 0.24);
-    round(DRUM, 'plaster', shade(vaseTint, 1.08), ax, hScale * 1.09, az, hScale * 0.29, 0.035, hScale * 0.29);
+    placeAsset('TerracottaPair', vector(ax, Math.abs(ax) > 6.3 ? 0.065 : 0.007, az), dRange(-0.62, 0.62));
   }
 
   batches.build();
@@ -1598,5 +1486,5 @@ export function buildWorld(scene, seed = 56103) {
     owned.length = 0;
   }
 
-  return { colliders, spawns, landmarks, bounds, update, dispose };
+  return { colliders, spawns, landmarks, bounds, assetPlacements, update, dispose };
 }
