@@ -10,7 +10,7 @@ const FORWARD = new Vector3(0, 0, -1);
 const WALL_GAP = .008;
 
 const locomotion = {
-  walk: [1.28, .53], run: [2.30, .32], sprint: [2.49, .38],
+  walk: [1.28, .53], run: [2.30, .32],
   backpedal: [1.32, .55], strafe_left: [1, .54], strafe_right: [1, .54],
   crouch_forward: [1.11, .57], crouch_back: [.98, .59],
   crouch_left: [.88, .56], crouch_right: [.88, .56],
@@ -129,15 +129,13 @@ export class SoldierAnimator {
     const longitudinal = 1 - side;
     const upright = 1 - this.crouch;
     const run = smoothstep(speed, 1.48, 3.16);
-    const sprint = smoothstep(speed, 3.68, 4.45);
     const left = x < 0;
     const forward = z <= 0;
-    this.rifleGaitWeight = forward ? upright * longitudinal * (1 - run * sprint) : 0;
+    this.rifleGaitWeight = forward ? upright * longitudinal : 0;
     this.blends.length = 0;
     if (forward) {
       this.blends.push(['walk', upright * longitudinal * (1 - run)]);
-      this.blends.push(['run', upright * longitudinal * run * (1 - sprint)]);
-      this.blends.push(['sprint', upright * longitudinal * sprint]);
+      this.blends.push(['run', upright * longitudinal * run]);
     } else {
       this.blends.push(['backpedal', upright * longitudinal]);
     }
