@@ -20,6 +20,11 @@ VIEWS = {
     'provisions': ((9.16, 1.66, .91), (14.6, 1.26, 1.02), 68),
     'pickup': ((1.8, 1.67, 21.7), (4.54, .99, 18.86), 55),
     'tea-counter': ((-10.45, 1.60, 28.72), (-11.67, 1.22, 30.1), 61),
+    'facade-market': ((-2.3, 1.66, 38.4), (-8.02, 3.78, 44.0), 67),
+    'facade-epicerie': ((3.15, 1.66, 42.8), (8.10, 2.9, 46.45), 66),
+    'facade-tea': ((-4.63, 1.66, 31.32), (-8.05, 2.65, 28.56), 67),
+    'facade-atelier': ((2.25, 1.66, 27.2), (8.12, 3.05, 23.25), 67),
+    'facade-housing': ((.6, 1.66, -6.6), (-8.10, 5.05, -12.1), 64),
 }
 
 
@@ -29,8 +34,9 @@ def from_game(point):
 
 
 class District:
-    def __init__(self, scene):
+    def __init__(self, scene, facades=()):
         self.scene = scene
+        self.facades = facades
         self.collections = {collection.name: collection for collection in scene.collection.children}
 
     def collection(self, name):
@@ -126,6 +132,7 @@ def export_district(ctx, batches, output):
             result = bpy.ops.export_scene.gltf(
                 filepath=str(output / (sector + '.glb')), export_format='GLB',
                 use_selection=True, export_extras=True, export_animations=False, export_apply=False,
+                export_image_format='WEBP', export_image_quality=88,
                 export_vertex_color='ACTIVE', export_all_vertex_colors=False,
                 export_draco_mesh_compression_enable=True, export_draco_mesh_compression_level=5,
                 export_draco_position_quantization=19, export_draco_normal_quantization=12,
@@ -267,13 +274,15 @@ def main():
         return
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.context.preferences.filepaths.save_version = 0
-    ctx = District(bpy.context.scene)
-    ctx.scene.name = 'Al Marfa | Marketline'
     sys.path.insert(0, str(ROOT / 'scripts'))
     layout = json.loads((args.workspace / 'al-marfa-layout.json').read_text())
+    ctx = District(bpy.context.scene, layout['facades'])
+    ctx.scene.name = 'Al Marfa | Marketline'
     import_map(ctx, args.workspace)
     if not args.base_only:
-        for module_name in ('al_marfa_street', 'al_marfa_interiors', 'al_marfa_materials'):
+        for module_name in ('al_marfa_street', 'al_marfa_interiors', 'al_marfa_materials',
+                            'al_marfa_facade_roofs', 'al_marfa_facade_shops',
+                            'al_marfa_facade_upper', 'al_marfa_facade_wear'):
             importlib.import_module(module_name).build(ctx)
     bpy.context.view_layer.update()
     export_district(ctx, dressing_batches(ctx), args.game)

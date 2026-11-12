@@ -298,7 +298,7 @@ function clothTexture(primary, secondary) {
   });
 }
 
-export function buildWorld(scene, seed = 56103, { baked = false } = {}) {
+export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = null } = {}) {
   const sceneOffset = scene.children.length;
   const rand = seeded(seed);
   const range = (lo, hi) => lo + (hi - lo) * rand();
@@ -421,7 +421,7 @@ export function buildWorld(scene, seed = 56103, { baked = false } = {}) {
     cables.push({ mesh, phase: rand() * TAU });
   }
 
-  function facade(frame, width, depth, levels, tint, trim, doors, access, front, sign, style, detail = false) {
+  function facade(frame, width, depth, levels, tint, trim, doors, access, front, sign, style, detail = false, replacement = null) {
     const floorHeight = 3.1;
     const signWidth = 3.81;
     const bandOffset = 0.07;
@@ -430,6 +430,8 @@ export function buildWorld(scene, seed = 56103, { baked = false } = {}) {
       if (access) frame.body(u, y, depth / 2 - 0.11, w, h, 0.22);
     };
     const face = depth / 2 + 0.012;
+    const omit = () => {};
+    const finish = replacement ? { ...frame, box: omit, plate: omit, mesh: omit, pipe: omit } : frame;
     const baseTint = shade(tint, 0.72);
     if (access && doors) {
       // The doorway begins at street grade.
@@ -468,6 +470,9 @@ export function buildWorld(scene, seed = 56103, { baked = false } = {}) {
         const open = isDoor && access && bay === 0;
         const detailedDoor = detail && isDoor;
         const variant = open ? 0 : isDoor ? (bay % 3 === 0 ? 1 : 2) : Math.floor(rand() * 5);
+        const opening = { floor, bay, u, w, h, center, bottom: y + (open ? 0.027 : openingBottom),
+          top: y + openingTop, open, balcony, variant };
+        if (replacement) replacement.openings.push(opening);
         if (!open) {
           if (access) {
             const surface = variant === 4 ? 'glass' : variant === 2 ? 'metal' : 'wood';
@@ -476,6 +481,8 @@ export function buildWorld(scene, seed = 56103, { baked = false } = {}) {
               addShopRecessInterior(frame, u, center, face, w, h, variant, trim);
             } else frame.body(u, center, face - 0.18, w, h, 0.2, surface);
           }
+        }
+        if (!open && !replacement) {
           if (detailedDoor) {
             if (variant === 2) {
               frame.box('flat', 0x201d19, u, center, face - 0.34, w + 0.03, h + 0.025, 0.08);
@@ -508,14 +515,14 @@ export function buildWorld(scene, seed = 56103, { baked = false } = {}) {
         }
         const casing = shade(tint, rand() > 0.3 ? 0.88 : 1.17);
         if (detailedDoor) {
-          addDoorSurround(frame, u, face, w, openingBottom, openingTop, casing, style, open);
+          if (!replacement) addDoorSurround(frame, u, face, w, openingBottom, openingTop, casing, style, open);
         } else {
-          frame.box('plaster', casing, u, center + h / 2, face + 0.02, w + 0.22, 0.13, 0.18);
-          frame.box('plaster', casing, u - w / 2, center, face + 0.027, 0.12, h, 0.19);
-          frame.box('plaster', casing, u + w / 2, center, face + 0.027, 0.12, h, 0.19);
-          if (!open) frame.box('plaster', shade(tint, 1.1), u, center - h / 2, face + 0.083, w + 0.24, 0.125, 0.34);
+          finish.box('plaster', casing, u, center + h / 2, face + 0.02, w + 0.22, 0.13, 0.18);
+          finish.box('plaster', casing, u - w / 2, center, face + 0.027, 0.12, h, 0.19);
+          finish.box('plaster', casing, u + w / 2, center, face + 0.027, 0.12, h, 0.19);
+          if (!open) finish.box('plaster', shade(tint, 1.1), u, center - h / 2, face + 0.083, w + 0.24, 0.125, 0.34);
         }
-        if (front && floor > 0 && !balcony && style === 'carved') {
+        if (!replacement && front && floor > 0 && !balcony && style === 'carved') {
           addPlasterHood(frame, u, center + h / 2, face, w, casing);
         }
         const streakH = range(0.33, 0.61);
@@ -523,16 +530,17 @@ export function buildWorld(scene, seed = 56103, { baked = false } = {}) {
           face - 0.001, w * 1.15, streakH);
         if (balcony) {
           const balconyW = w + range(0.9, 1.35);
+          opening.balconyWidth = balconyW;
           const platformY = y + 0.96;
           frame.box('plaster', casing, u, platformY, face + 0.59, balconyW, 0.22, 1.24);
           frame.box('plaster', shade(tint, 0.64), u, platformY - 0.145, face + 0.48, balconyW * 0.91, 0.09, 1.03);
           const steel = rand() < 0.5 ? 0x414e49 : 0x595b52;
           for (let k = 0; k <= 11; k++) {
-            frame.box('metal', steel, u + balconyW * (k / 11 - 0.5), platformY + 0.47, face + 1.15, 0.028, 0.85, 0.04);
+            finish.box('metal', steel, u + balconyW * (k / 11 - 0.5), platformY + 0.47, face + 1.15, 0.028, 0.85, 0.04);
           }
           for (const level of [platformY + 0.24, platformY + 0.89]) {
-            frame.box('metal', steel, u, level, face + 1.15, balconyW, 0.037, 0.06);
-            for (const offset of [-balconyW / 2, balconyW / 2]) frame.box('metal', steel, u + offset, level, face + 0.63, 0.04, 0.038, 1.1);
+            finish.box('metal', steel, u, level, face + 1.15, balconyW, 0.037, 0.06);
+            for (const offset of [-balconyW / 2, balconyW / 2]) finish.box('metal', steel, u + offset, level, face + 0.63, 0.04, 0.038, 1.1);
           }
           if (rand() < 0.45 && windMeshes.length < 28) awning(frame.p(u, platformY + 0.91, face + 1.18), frame.angle, 0.87, 0.72, Math.floor(rand() * 4), true);
           if (rand() < 0.5) {
@@ -614,9 +622,14 @@ export function buildWorld(scene, seed = 56103, { baked = false } = {}) {
     const trim = options.trim ?? pick(accents);
     const top = levels * 3.1;
     const roof = shade(tint, 0.81);
+    const replaceFront = facadeLayout && options.streetFront;
     if (!access) f.body(0, top * 0.5, 0, width, top, depth);
     for (const side of [-1, 1]) {
-      f.box('plaster', shade(tint, side < 0 ? 0.91 : 0.96), side * (width * 0.5 - 0.125), top / 2, 0, 0.25, top, depth);
+      // Bring the return just past the ends of the front wall segments.
+      // Their coincident side faces otherwise flicker in the Blender export.
+      const returnWidth = replaceFront ? .262 : .25;
+      f.box('plaster', shade(tint, side < 0 ? 0.91 : 0.96),
+        side * (width * 0.5 - 0.125), top / 2, 0, returnWidth, top, depth - (replaceFront ? .018 : 0));
       if (access) f.body(side * (width * 0.5 - 0.125), top / 2, 0, 0.25, top, depth);
       for (let y = 3.1; y < top + 0.01; y += 3.1) {
         f.box('plaster', roof, side * width * 0.5, y - 0.075, 0, 0.14, 0.15, depth + 0.23);
@@ -662,7 +675,12 @@ export function buildWorld(scene, seed = 56103, { baked = false } = {}) {
     const signage = options.sign ?? -1;
     const sign = signage >= 0 ? { style: signage, u: options.signOffset ?? width * 0.13 } : null;
     const style = options.style ?? (Math.round(Math.abs(x * 0.27 + z * 0.42)) % 3 === 0 ? 'carved' : 'render');
-    facade(f, width, depth, levels, tint, trim, true, access, true, sign, style, options.streetFront);
+    const replacement = replaceFront ? {
+      id: facadeLayout.length, side: x < 0 ? 'west' : 'east', centerZ: z,
+      faceX: f.p(0, 0, depth / 2 + 0.012).x, angle, width, depth, levels, style, tint, trim, sign, openings: [],
+    } : null;
+    if (replacement) facadeLayout.push(replacement);
+    facade(f, width, depth, levels, tint, trim, true, access, true, sign, style, options.streetFront, replacement);
     facade(rear, width, depth, levels, shade(tint, 0.94), trim, true, access && options.through, false, null, 'service');
     if (options.canopy) {
       const { center, span, projection, finish } = options.canopy;

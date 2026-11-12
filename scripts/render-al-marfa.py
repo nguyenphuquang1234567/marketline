@@ -11,10 +11,13 @@ cli.add_argument('--out', type=Path, required=True)
 cli.add_argument('--width', type=int, default=1440)
 cli.add_argument('--samples', type=int, default=48)
 cli.add_argument('--metal', action='store_true')
+cli.add_argument('--threads', type=int, default=4)
 args = cli.parse_args(sys.argv[sys.argv.index('--') + 1:])
 args.out.mkdir(parents=True, exist_ok=True)
 scene = bpy.context.scene
 scene.render.engine = 'CYCLES'
+scene.render.threads_mode = 'FIXED'
+scene.render.threads = max(1, args.threads)
 scene.cycles.samples = args.samples
 scene.cycles.use_denoising = True
 scene.cycles.adaptive_threshold = .025

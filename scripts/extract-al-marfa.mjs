@@ -32,7 +32,8 @@ try {
         import('/src/market-sky.js'),
       ]);
       const scene = new Scene();
-      const world = buildWorld(scene, 2324);
+      const facades = [];
+      const world = buildWorld(scene, 2324, { facadeLayout: facades });
       await waitForWorldMaterials();
       await loadMarketProps(scene, world.assetPlacements);
       scene.updateMatrixWorld(true);
@@ -80,7 +81,7 @@ try {
       });
       await window.writeAlMarfa('al-marfa-base.glb', base64);
       await window.writeAlMarfa('al-marfa-layout.json', btoa(JSON.stringify({
-        colliders: world.colliders, bounds: world.bounds, spawns: world.spawns, sun: MARKET_SUN.toArray(),
+        colliders: world.colliders, bounds: world.bounds, spawns: world.spawns, sun: MARKET_SUN.toArray(), facades,
       })));
       return staticMeshes.length;
     });

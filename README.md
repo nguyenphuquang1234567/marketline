@@ -55,6 +55,8 @@ Collision uses analytic box proxies and ground. Reactive box contacts use conser
 
 Open [Al-Marfa.blend](art/Al-Marfa.blend) with Blender 5.3. The file contains the district at meter scale, packed textures, the modeled street and room details, and player-height cameras. Enable the reference collection to see the game's collision boxes and spawn points.
 
+The twelve central market frontages use measured opening coordinates from the layout. The Blender scripts replace their visible doors, window assemblies and balcony rails. The layout retains the structural wall openings and the game's collision proxies. The façade cameras are named `facade-market`, `facade-epicerie`, `facade-tea`, `facade-atelier` and `facade-housing`.
+
 To reproduce the authored scene and its three Draco GLBs from the baseline layout and the Blender scene scripts, run these commands from the repository:
 
 ```sh
