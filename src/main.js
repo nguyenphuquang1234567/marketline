@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import soldierURL from './assets/soldier-rig.glb?url&inline';
 import { soldierVariants } from './soldier-model.js';
 import { buildWorld } from './world.js';
+import { AL_MARFA_SEED, loadAlMarfa } from './al-marfa.js';
 import { StaticBVH, CharacterController } from './physics.js';
 import { RigidWorld } from './rigid-world.js';
 import { makeLooseProps } from './props.js';
@@ -20,7 +21,7 @@ import { DebugView, DEBUG_NAMES } from './debug.js';
 
 const parameters = new URLSearchParams(location.search);
 const QA = parameters.has('qa');
-const SEED = (Number(parameters.get('seed')) || 2324) >>> 0;
+const SEED = (Number(parameters.get('seed')) || AL_MARFA_SEED) >>> 0;
 const STEP = 1 / 120;
 const ROUND = 600;
 const WIN = 30;
@@ -97,7 +98,8 @@ class Marketline {
     await this.paint();
     this.ui.progress('Building Al Marfa');
     await this.paint();
-    this.world = buildWorld(this.scene, SEED);
+    const useBlenderMap = SEED === AL_MARFA_SEED;
+    this.world = buildWorld(this.scene, SEED, { baked: useBlenderMap });
     this.physics = new StaticBVH(this.world.colliders);
     this.rigid = new RigidWorld(this.physics);
     this.props = makeLooseProps(this.scene, this.rigid, this.physics, randomFor(SEED ^ 0xb124));
@@ -111,6 +113,7 @@ class Marketline {
       loadMarketSky(),
       loadMarketProps(this.scene, this.world.assetPlacements),
       waitForWorldMaterials(),
+      useBlenderMap ? loadAlMarfa(this.world) : null,
     ]);
     this.soldiers = soldierVariants(soldier);
     this.playerRig = new BotRig(corpse, 7, 0, this.soldiers.templates[0]);

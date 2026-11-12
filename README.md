@@ -45,11 +45,28 @@ The browser harness runs the production build, captures gameplay checkpoints, an
 ## Implementation
 
 - `main.js` owns the 120 Hz fixed-step match, input, and damage. `physics.js` provides a binned BVH, continuous shape casts, and the capsule controller. `rigid-world.js` resolves reactive prop contacts with sequential impulses. `effects.js` owns pooled projectiles and debris effects.
-- `world.js` assembles seeded façades, props, textiles, and textures. `bots.js` uses a clearance-checked A* grid with cover, hearing, vision, and delayed squad reports. `bot-rig.js` poses the limbs and simulates non-graphic falls. The gait keeps stance feet fixed in world space and emits footsteps on landing. Render poses blend between simulation samples.
+- The default Al Marfa map loads three Blender-exported sectors. `world.js` supplies collision, spawn locations and moving scenery. It also builds the visual map for alternate development seeds. `bots.js` uses a clearance-checked A* grid with cover, hearing, vision, and delayed squad reports. `bot-rig.js` poses the limbs and simulates non-graphic falls. The gait keeps stance feet fixed in world space and emits footsteps on landing. Render poses blend between simulation samples.
 - `render.js` and `shaders.js` own the HDR and post-processing graph. It combines cascaded sun shadows, depth-derived normals, camera and moving-mesh velocity, horizon AO, temporal reprojection, a separately composited viewmodel, bloom, exposure adaptation, and an AgX-style LUT composite.
 - `weapon.js` models and animates the carbine. `audio.js` generates gunshots, mechanics, footsteps, ambience, reverb, and HUD sounds with Web Audio. `ui.js` owns the menus and HUD.
 
 Collision uses analytic box proxies and ground. Reactive box contacts use conservative bounds, and ragdolls use position-based distance and bend constraints. This leaves triangle-mesh sweeps, general convex manifolds, and explicit ragdoll twist constraints unimplemented. The temporal passes track world camera motion and bot and prop transforms. The viewmodel composites after world TAA, and transparent effects use an approximate reactive history weight.
+
+## Al Marfa in Blender
+
+Open [Al-Marfa.blend](art/Al-Marfa.blend) with Blender 5.3. The file contains the district at meter scale, packed textures, the modeled street and room details, and player-height cameras. Enable the reference collection to see the game's collision boxes and spawn points.
+
+To reproduce the authored scene and its three Draco GLBs from the baseline layout and the Blender scene scripts, run these commands from the repository:
+
+```sh
+node scripts/extract-al-marfa.mjs
+blender -b --factory-startup --python-exit-code 1 -P scripts/build-al-marfa.py
+blender -b art/Al-Marfa.blend --python-exit-code 1 -P scripts/render-al-marfa.py -- market arch tea pickup --out .blender-work/renders
+npm test
+```
+
+The web build bundles the GLBs and their decoder so it can launch offline. The Blender cameras use Cycles and their own scene lighting. The game applies its real-time materials and lighting to the exported geometry.
+
+After editing and saving the `.blend`, re-export the game map with `blender -b art/Al-Marfa.blend --python-exit-code 1 -P scripts/build-al-marfa.py -- --export-only`. Put new playable-map visual meshes in the `Exterior | ...` or `Interiors | ...` collections. Update the game's collision proxies separately when changing traversable geometry.
 
 ## Asset credits
 

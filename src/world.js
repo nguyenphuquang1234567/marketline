@@ -88,9 +88,10 @@ function stainTexture(seed) {
 }
 
 class StaticBatches {
-  constructor(scene, materials) {
+  constructor(scene, materials, enabled) {
     this.scene = scene;
     this.materials = materials;
+    this.enabled = enabled;
     this.batches = new Map();
     this.transform = new THREE.Matrix4();
     this.normal = new THREE.Matrix3();
@@ -103,6 +104,7 @@ class StaticBatches {
   }
 
   add(geometry, material, color, x, y, z, sx, sy, sz, angle = 0, uScale = 1, vScale = 1) {
+    if (!this.enabled) return;
     const cell = Math.floor((x + 16) / 32) + ':' + Math.floor((z + 16) / 32);
     const key = material + ':' + cell;
     let batch = this.batches.get(key);
@@ -180,6 +182,8 @@ class StaticBatches {
       meshGeometry.setIndex(batch.index);
       meshGeometry.computeBoundingSphere();
       const mesh = new THREE.Mesh(meshGeometry, this.materials[batch.material]);
+      mesh.name = 'Static_' + batch.material;
+      mesh.userData.worldMaterial = batch.material;
       mesh.castShadow = !['road', 'asphalt', 'glass', 'autoGlass', 'cabinGlass', 'gravel', 'stain', 'lantern', 'mosaic', 'poster', 'streetLabel', 'shopTile', 'shopRug', 'shopMenu', 'skyline'].includes(batch.material)
         && !batch.material.startsWith('sign');
       mesh.receiveShadow = batch.material !== 'lantern' && batch.material !== 'skyline';
@@ -294,7 +298,7 @@ function clothTexture(primary, secondary) {
   });
 }
 
-export function buildWorld(scene, seed = 56103) {
+export function buildWorld(scene, seed = 56103, { baked = false } = {}) {
   const sceneOffset = scene.children.length;
   const rand = seeded(seed);
   const range = (lo, hi) => lo + (hi - lo) * rand();
@@ -307,7 +311,7 @@ export function buildWorld(scene, seed = 56103) {
   const cables = [];
   const flutter = [];
   const palms = [];
-  const batches = new StaticBatches(scene, materials);
+  const batches = new StaticBatches(scene, materials, !baked);
   Object.assign(materials, createFacadeMaterials(seed));
   createStreetMaterials(materials);
   const palette = [0xd9c39a, 0xe3cbb0, 0xd2a482, 0xaebfc0, 0xcdbaa4, 0xd9b59f, 0xd5cec0];
@@ -1472,7 +1476,7 @@ export function buildWorld(scene, seed = 56103) {
 
   function dispose() {
     const geometries = new Set();
-    const uniqueMaterials = new Set();
+    const uniqueMaterials = new Set(Object.values(materials));
     const textures = new Set();
     for (const root of owned) {
       root.traverse(object => {
@@ -1493,5 +1497,21 @@ export function buildWorld(scene, seed = 56103) {
     owned.length = 0;
   }
 
-  return { colliders, spawns, landmarks, bounds, assetPlacements, update, dispose };
+  function attachBakedWorld(meshes) {
+    for (const mesh of meshes) {
+      const key = mesh.userData.worldMaterial;
+      if (key) {
+        if (!materials[key]) throw new Error('Unknown Al Marfa material ' + key);
+        mesh.material.dispose();
+        mesh.material = materials[key];
+      }
+      mesh.castShadow = mesh.userData.worldCastShadow ?? true;
+      mesh.receiveShadow = mesh.userData.worldReceiveShadow ?? true;
+      mesh.userData.nearShadowOnly = !key;
+      scene.add(mesh);
+      owned.push(mesh);
+    }
+  }
+
+  return { colliders, spawns, landmarks, bounds, assetPlacements, update, dispose, attachBakedWorld };
 }
