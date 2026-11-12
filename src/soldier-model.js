@@ -57,7 +57,7 @@ export function soldierVariants({ scene: template, animations }) {
     }),
   }]));
   const colors = [[.32, .68, 1], [1, .30, .22]];
-  const helmetColors = [[.12, .45, 1], [1, .15, .12]];
+  const armorColors = [[.12, .45, 1], [1, .15, .12]];
   const variants = colors.map((color, team) => {
     const root = clone(template);
     const mesh = root.getObjectByProperty('isSkinnedMesh', true);
@@ -65,12 +65,17 @@ export function soldierVariants({ scene: template, animations }) {
     const position = mesh.geometry.getAttribute('position');
     const tint = new Float32Array(position.count * 3).fill(1);
     for (let i = 0; i < position.count; i++) {
-      const x = Math.abs(position.getX(i)), y = position.getY(i);
-      if (y > 1.61) {
-        // Fade the crown tint at the brim to keep it off the face and chin strap.
-        const coverage = MathUtils.smoothstep(y, 1.61, 1.65);
+      const x = Math.abs(position.getX(i)), y = position.getY(i), z = position.getZ(i);
+      const helmet = MathUtils.smoothstep(y, 1.61, 1.65);
+      // The chest plate sits in front of the torso in the bind pose.
+      const vest = (1 - MathUtils.smoothstep(x, .165, .218))
+        * MathUtils.smoothstep(-z, .041, .086)
+        * MathUtils.smoothstep(y, .955, 1.005)
+        * (1 - MathUtils.smoothstep(y, 1.285, 1.362));
+      const coverage = Math.max(helmet, vest * .92);
+      if (coverage > 0) {
         for (let channel = 0; channel < 3; channel++) {
-          tint[i * 3 + channel] = MathUtils.lerp(1, helmetColors[team][channel], coverage);
+          tint[i * 3 + channel] = MathUtils.lerp(1, armorColors[team][channel], coverage);
         }
       } else if (x >= .255 && x <= .331 && y >= 1.20 && y <= 1.44) {
         tint.set(color, i * 3);
