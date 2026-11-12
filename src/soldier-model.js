@@ -1,4 +1,4 @@
-import { Float32BufferAttribute } from 'three';
+import { Float32BufferAttribute, MathUtils } from 'three';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 
 function collectFallSurface(mesh) {
@@ -57,7 +57,8 @@ export function soldierVariants({ scene: template, animations }) {
     }),
   }]));
   const colors = [[.32, .68, 1], [1, .30, .22]];
-  const variants = colors.map(color => {
+  const helmetColors = [[.12, .45, 1], [1, .15, .12]];
+  const variants = colors.map((color, team) => {
     const root = clone(template);
     const mesh = root.getObjectByProperty('isSkinnedMesh', true);
     mesh.geometry = source.geometry.clone();
@@ -65,8 +66,15 @@ export function soldierVariants({ scene: template, animations }) {
     const tint = new Float32Array(position.count * 3).fill(1);
     for (let i = 0; i < position.count; i++) {
       const x = Math.abs(position.getX(i)), y = position.getY(i);
-      if (x < .255 || x > .331 || y < 1.20 || y > 1.44) continue;
-      tint.set(color, i * 3);
+      if (y > 1.61) {
+        // Fade the crown tint at the brim to keep it off the face and chin strap.
+        const coverage = MathUtils.smoothstep(y, 1.61, 1.65);
+        for (let channel = 0; channel < 3; channel++) {
+          tint[i * 3 + channel] = MathUtils.lerp(1, helmetColors[team][channel], coverage);
+        }
+      } else if (x >= .255 && x <= .331 && y >= 1.20 && y <= 1.44) {
+        tint.set(color, i * 3);
+      }
     }
     mesh.geometry.setAttribute('color', new Float32BufferAttribute(tint, 3));
     mesh.material = source.material.clone();
