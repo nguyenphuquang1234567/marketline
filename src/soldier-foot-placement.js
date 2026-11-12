@@ -7,6 +7,8 @@ const FORWARD = new Vector3(0, 0, -1);
 const HEEL = new Vector3(0, -.129, .078);
 const TOE = new Vector3(0, -.129, -.181);
 const FOOT_PROBES = [HEEL, TOE];
+// A steeply pitched boot can still touch the curb with the ball of the foot.
+const PUSH_OFF_PROBES = [...FOOT_PROBES, new Vector3(0, -.129, -.122)];
 
 export class SoldierFootPlacement {
   constructor(bones) {
@@ -58,7 +60,8 @@ export class SoldierFootPlacement {
   floor(physics, ankle, height) {
     let surface = null;
     this.supportAnkleY = -Infinity;
-    for (const offset of FOOT_PROBES) {
+    const probes = this.flatDirection.y > .62 ? PUSH_OFF_PROBES : FOOT_PROBES;
+    for (const offset of probes) {
       this.probe.copy(offset).applyQuaternion(this.footFrame);
       const soleY = this.probe.y;
       this.probe.add(ankle).setY(height + .46);

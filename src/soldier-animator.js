@@ -10,7 +10,7 @@ const FORWARD = new Vector3(0, 0, -1);
 const WALL_GAP = .008;
 
 const locomotion = {
-  walk: [1.45, .59], run: [2.12, .45], sprint: [2.49, .38],
+  walk: [1.28, .53], run: [2.30, .32], sprint: [2.49, .38],
   backpedal: [1.32, .55], strafe_left: [1, .54], strafe_right: [1, .54],
   crouch_forward: [1.11, .57], crouch_back: [.98, .59],
   crouch_left: [.88, .56], crouch_right: [.88, .56],
@@ -131,10 +131,11 @@ export class SoldierAnimator {
     const side = Math.abs(x) / Math.max(.001, Math.abs(x) + Math.abs(z));
     const longitudinal = 1 - side;
     const upright = 1 - this.crouch;
-    const run = smoothstep(speed, 1.25, 3.05);
-    const sprint = smoothstep(speed, 3.28, 4.45);
+    const run = smoothstep(speed, 1.48, 3.16);
+    const sprint = smoothstep(speed, 3.68, 4.45);
     const left = x < 0;
     const forward = z <= 0;
+    this.rifleGaitWeight = forward ? upright * longitudinal * (1 - run * sprint) : 0;
     this.blends.length = 0;
     if (forward) {
       this.blends.push(['walk', upright * longitudinal * (1 - run)]);
@@ -235,7 +236,10 @@ export class SoldierAnimator {
     }
 
     const aimPhase = (bot.clock + (bot.phase ?? 0) * .27) / 1.73 % 1;
-    this.upperPair('aim', 'aim_crouch', aimPhase, this.crouch, this.aim * (1 - .12 * motion));
+    // The rifle gait already carries the weapon in both hands. Aim the moving
+    // shoulders and rifle below without replacing their motion with idle aim.
+    const aimWeight = this.aim * (1 - motion * lerp(.12, .98, this.rifleGaitWeight));
+    this.upperPair('aim', 'aim_crouch', aimPhase, this.crouch, aimWeight);
     const remaining = bot.reloading || 0;
     this.reloadSpan = remaining > 0 ? Math.max(this.reloadSpan, remaining) : 0;
     this.reloadPhase = this.reloadSpan > 0 ? 1 - remaining / this.reloadSpan : 0;

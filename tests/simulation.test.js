@@ -349,11 +349,85 @@ test('reactive crates stack, sleep, and wake when their support is shot', () => 
   assert.equal(crates[2].position.y, 1.25);
 });
 
-test('soldier fall clips keep limbs apart and above the floor beside either wall', async () => {
+async function loadSoldierAsset() {
   const bytes = await readFile(new URL('../src/assets/soldier-rig.glb', import.meta.url));
   const loader = new GLTFLoader();
   loader.register(() => ({ name: 'testTexture', loadTexture: async () => new Texture({}) }));
-  const asset = soldierVariants(await loader.parseAsync(new Uint8Array(bytes).buffer, ''));
+  return soldierVariants(await loader.parseAsync(new Uint8Array(bytes).buffer, ''));
+}
+
+test('rifle walk and run loop and keep their footfall rhythm through a speed change', async () => {
+  const asset = await loadSoldierAsset();
+  const template = asset.templates[0];
+  const physics = new StaticBVH([]);
+  const controller = new CharacterController(physics, vector(0, 0, 0));
+  const bot = {
+    position: controller.position, velocity: controller.velocity, height: controller.height, controller,
+    yaw: 0, pitch: 0, kick: 0, clock: 0, state: 'engage', visibleTarget: true,
+  };
+  const rig = new BotRig(new Group(), 0, 0, template);
+  const { feet, chest, bones } = rig.soldier;
+  let previousPhase = 0;
+  let doubleSupport = 0;
+  let flight = 0;
+  const walkLean = [];
+  const runLean = [];
+  const up = new Vector3();
+  const world = new Vector3();
+  const elbow = new Vector3();
+  const wish = vector(0, 0, -1);
+  const dt = 1 / 60;
+  try {
+    for (const name of ['walk', 'run']) {
+      const { tracks, duration } = template.clips.get(name);
+      for (const track of tracks) {
+        const end = track.interpolant.evaluate(duration);
+        const sign = track.property === 'quaternion' && end.reduce((sum, x, i) => sum + x * track.reference[i], 0) < 0 ? -1 : 1;
+        assert.ok(end.every((x, i) => Math.abs(x * sign - track.reference[i]) < .0001), name + ' loop seam');
+      }
+    }
+    for (let frame = 0; frame <= 300; frame++) {
+      const t = frame * dt;
+      const progress = Math.max(0, Math.min(1, t - 1.4, 4.7 - t));
+      const speed = 1.25 + 2.2 * progress;
+      controller.step(dt, { wish, speed });
+      bot.clock = t;
+      rig.pose(bot, physics, dt);
+      const phaseAdvance = (rig.soldier.phase - previousPhase + 1) % 1;
+      assert.ok(phaseAdvance < .045, 'changing speed does not restart the gait cycle');
+      previousPhase = rig.soldier.phase;
+      for (const { foot } of feet.legs) {
+        foot.getWorldPosition(world);
+        assert.ok(world.y > .10 && world.y < .57, 'the boot stays within the gait range');
+      }
+      if (t > .65) {
+        bones.get('handL').getWorldPosition(world);
+        bones.get('forearmL').getWorldPosition(elbow);
+        assert.ok(Math.abs(world.distanceTo(elbow) - .229) < .006, 'the arm can reach the rifle without stretching');
+      }
+      // The chest bone points up in the bind pose.
+      up.set(0, 1, 0).transformDirection(chest.matrixWorld);
+      const support = feet.legs.filter(leg => leg.planted).length;
+      if (t > .65 && t < 1.4) {
+        doubleSupport += Number(support === 2);
+        walkLean.push(-up.z);
+      }
+      if (t > 2.8 && t < 3.65) {
+        flight += Number(support === 0);
+        runLean.push(-up.z);
+      }
+    }
+    assert.ok(doubleSupport > 0, 'walk passes weight from one planted foot to the other');
+    assert.ok(flight > 0, 'run includes a flight phase');
+    assert.ok(Math.min(...runLean) - Math.max(...walkLean) > .18, 'the forward run lean survives aiming');
+  } finally {
+    rig.dispose();
+    asset.dispose();
+  }
+});
+
+test('soldier fall clips keep limbs apart and above the floor beside either wall', async () => {
+  const asset = await loadSoldierAsset();
   const point = new Vector3();
   const joint = new Vector3();
 
