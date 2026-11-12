@@ -109,10 +109,13 @@ function lutTexture() {
         const rgb = [r / 32, g / 32, b / 32];
         const lum = rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
         const mid = 4 * lum * (1 - lum);
-        const saturation = 1.025 + .085 * mid;
-        const shift = [mid * .006, mid * .002, -mid * .003];
+        const saturation = 1.02 + .113 * mid;
+        const shade = (1 - lum) ** 2 * mid;
+        const sunlit = lum ** 2 * mid;
+        const shift = [sunlit * .033 - shade * .013, sunlit * .008 - shade * .002, shade * .014 - sunlit * .019];
         for (let j = 0; j < 3; j++) {
-          const c = (rgb[j] - lum) * saturation + lum + shift[j];
+          const channel = (rgb[j] - lum) * saturation + lum;
+          const c = channel + (channel - .50) * .19 * mid + shift[j];
           data[i + j] = Math.round(255 * THREE.MathUtils.clamp(c, 0, 1));
         }
         data[i + 3] = 255;
@@ -294,15 +297,15 @@ export class RenderGraph {
       this.environment = pmrem.fromEquirectangular(skyPhoto);
       pmrem.dispose();
       scene.environment = weaponScene.environment = this.environment.texture;
-      scene.environmentIntensity = 0.78;
+      scene.environmentIntensity = 0.72;
       weaponScene.environmentIntensity = 0.62;
     }
     this.motionScene = new THREE.Scene();
     this.motionMeshes = [];
 
-    this.sun = new THREE.DirectionalLight(0xffe6c6, 4.05);
+    this.sun = new THREE.DirectionalLight(0xffe2bc, 4.12);
     this.sun.position.copy(SUN).multiplyScalar(85);
-    this.skyLight = new THREE.HemisphereLight(0xbfd8fc, 0xb6a085, this.hdr ? 0.83 : 1.28);
+    this.skyLight = new THREE.HemisphereLight(0xbfd8fc, 0xb6a085, this.hdr ? 0.79 : 1.28);
     scene.fog = new THREE.FogExp2(0xbfc5c5, .0049);
     scene.add(this.sun, this.skyLight);
     this.weaponSun = new THREE.DirectionalLight(0xffefd7, 2.65);
