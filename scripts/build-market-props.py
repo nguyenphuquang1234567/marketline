@@ -375,35 +375,58 @@ def lantern():
     return p.finish()
 
 
-def add_timber_texture():
-    """Bake a small linear-light grain multiplier into the timber's base color."""
-    size = 256
-    x, y = np.meshgrid(np.arange(size) / size, np.arange(size) / size)
-    rng = np.random.default_rng(297)
-    bend = .024 * np.sin(TAU * x) + .008 * np.sin(TAU * x * 3)
-    ring = (y + bend + .006 * np.sin(TAU * (x * 4 + y * 2))) * 28
-    growth = (.5 + .5 * np.cos(TAU * ring)) ** 5
-    fibers = .5 + .5 * np.sin(TAU * (y * 76 + bend * 25 + .075 * np.sin(TAU * x * 2)))
-    weather = .94 + .047 * np.cos(TAU * y * 5) * np.cos(TAU * x) + .024 * np.sin(TAU * y * 13)
-    grain = np.clip(weather - .15 * growth - .048 * fibers - .055 * rng.random((size, size)), .64, 1)
-    pixels = np.stack((grain, grain, grain, np.ones_like(grain)), axis=2).astype(np.float32)
-    image = bpy.data.images.new("TimberGrain", width=size, height=size, alpha=False)
-    image.colorspace_settings.name = "Linear Rec.709"
-    image.pixels.foreach_set(pixels.ravel())
-    image.pack()
-    material = bpy.data.materials[SLOTS["wood"][0]]
-    nodes = material.node_tree.nodes
-    links = material.node_tree.links
+def add_scanned_finish(slot, scan, contrast, relief, metalness=None):
+    """Embed scanned surface detail while preserving each prop's vertex colors."""
+    root = Path(__file__).resolve().parents[1] / "src/assets/world-textures"
+    mat = bpy.data.materials[SLOTS[slot][0]]
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
     shader = next(node for node in nodes if node.type == "BSDF_PRINCIPLED")
-    attribute = next(node for node in nodes if node.type == "VERTEX_COLOR")
-    texture = nodes.new("ShaderNodeTexImage")
-    texture.image = image
-    mixed = nodes.new("ShaderNodeMixRGB")
-    mixed.blend_type = "MULTIPLY"
-    mixed.inputs[0].default_value = 1
-    links.new(texture.outputs["Color"], mixed.inputs[1])
-    links.new(attribute.outputs["Color"], mixed.inputs[2])
-    links.new(mixed.outputs[0], shader.inputs["Base Color"])
+
+    def pixels(channel, space):
+        source = bpy.data.images.load(str(root / f"{scan}-{channel}.webp"), check_existing=True)
+        source.colorspace_settings.name = space
+        width, height = source.size
+        values = np.empty(width * height * 4, dtype=np.float32)
+        source.pixels.foreach_get(values)
+        values = values.reshape(height, width, 4)
+        return np.rot90(values).copy() if slot == "wood" else values
+
+    def texture(channel, values, space):
+        height, width = values.shape[:2]
+        image = bpy.data.images.new(f"{slot}_{channel}", width=width, height=height)
+        image.colorspace_settings.name = space
+        image.pixels.foreach_set(values.ravel())
+        image.pack()
+        node = nodes.new("ShaderNodeTexImage")
+        node.image = image
+        return node
+
+    color = pixels("albedo", "sRGB")
+    luminance = color[:, :, :3] @ np.array([.2126, .7152, .0722], dtype=np.float32)
+    grain = np.clip(.87 + contrast * (luminance - np.median(luminance)), .48, 1)
+    color[:, :, :3] = grain[:, :, None]
+    color[:, :, 3] = 1
+    base = texture("albedo", color, "sRGB")
+    # glTF multiplies this image by the exported COLOR_0 attribute.
+    links.new(base.outputs["Color"], shader.inputs["Base Color"])
+
+    normals = pixels("normal", "Non-Color")
+    if slot == "wood":
+        # Rotate tangent vectors together with the grain image.
+        normals[:, :, :2] = np.stack((normals[:, :, 1], 1 - normals[:, :, 0]), axis=-1)
+    normal_map = nodes.new("ShaderNodeNormalMap")
+    normal_map.inputs["Strength"].default_value = relief
+    links.new(texture("normal", normals, "Non-Color").outputs["Color"], normal_map.inputs["Color"])
+    links.new(normal_map.outputs["Normal"], shader.inputs["Normal"])
+
+    packed = pixels("orm", "Non-Color")
+    roughness = SLOTS[slot][1]
+    packed[:, :, 1] = np.clip(roughness + (packed[:, :, 1] - .55) * .42, .24, .98)
+    channels = nodes.new("ShaderNodeSeparateColor")
+    links.new(texture("roughness", packed, "Non-Color").outputs["Color"], channels.inputs["Color"])
+    links.new(channels.outputs["Green"], shader.inputs["Roughness"])
+    if metalness is not None:
+        shader.inputs["Metallic"].default_value = metalness
 
 
 def add_surface_normal(slot, texture_name, spacing, depth, seed):
@@ -452,9 +475,13 @@ def main():
     scene.unit_settings.system = "METRIC"
     scene.unit_settings.scale_length = 1
     props = [crate(), dates(), pottery(), lantern()]
-    add_timber_texture()
+    add_scanned_finish("wood", "wood", .82, .47)
+    add_scanned_finish("fiber", "cloth", .53, .32)
+    add_scanned_finish("clay", "limestone", .62, .28)
+    add_scanned_finish("iron", "metal", .81, .34, .62)
+    add_scanned_finish("brass", "metal", .44, .16, .75)
     add_surface_normal("fruit", "CitrusPores", 20, .32, 83)
-    add_surface_normal("clay", "ClayPores", 32, .22, 16)
+    add_surface_normal("date", "DateSkinPores", 15, .31, 71)
     bpy.context.view_layer.update()
     if args.blend:
         bpy.ops.wm.save_as_mainfile(filepath=str(args.blend.resolve()))
