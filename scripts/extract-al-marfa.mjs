@@ -34,8 +34,8 @@ try {
       const scene = new Scene();
       const facades = [], buildings = [];
       const world = buildWorld(scene, 2324, { facadeLayout: facades, buildingLayout: buildings });
-      await waitForWorldMaterials();
       await loadMarketProps(scene, world.assetPlacements);
+      await waitForWorldMaterials();
       scene.updateMatrixWorld(true);
       const staticMeshes = [];
       const exportMaterials = new Map();

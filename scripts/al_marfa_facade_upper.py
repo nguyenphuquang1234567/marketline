@@ -95,12 +95,12 @@ def reveal(mesh, u, bottom, top, width, stone, dark):
     """Line each opening and put the glass behind the projecting jamb."""
     z = (bottom + top) / 2
     h = top - bottom
-    mesh.block((u, -.274, z), (width + .018, .038, h + .025), dark, .002)
+    mesh.block((u, -.484, z), (width + .018, .038, h + .025), dark, .002)
     for side in (-1, 1):
         edge = u + side*(width/2 + .011)
-        mesh.block((edge, -.074, z), (.083, .255, h + .012), stone, .008)
+        mesh.block((edge, -.149, z), (.083, .402, h + .012), stone, .008)
     for height in (bottom, top):
-        mesh.block((u, -.070, height), (width - .060, .248, .076), stone, .006)
+        mesh.block((u, -.145, height), (width - .060, .395, .076), stone, .006)
 
 
 def curtain(mesh, u, bottom, top, width, cloth, side, half):
@@ -116,7 +116,7 @@ def curtain(mesh, u, bottom, top, width, cloth, side, half):
             # The fabric is pinched at the rod and opens toward the hem.
             x = start - side*q*half_width*(.86 + .14*t)
             height = top - .084 - t*(top - bottom - .15) + t**4*.017*fold
-            verts.append((x, -.214 + .022*fold + .011*sin(3*q + t), height))
+            verts.append((x, -.395 + .022*fold + .011*sin(3*q + t), height))
     for row in range(rows):
         for span in range(spans):
             i = row*(spans + 1) + span
@@ -178,7 +178,7 @@ def roller_shade(mesh, u, bottom, top, width, reed, iron, position):
     length = (top - bottom) * position
     lower = top - length
     width -= .235
-    d = -.130
+    d = -.321
     mesh.pipe([(u-width/2,d,top-.086),(u+width/2,d,top-.086)], .043, reed, 10)
     mesh.block((u,d-.015,(lower+top-.074)/2), (width,.012,top-.074-lower), reed, .002)
     for row in range(round((length-.09)/.024)):
@@ -200,7 +200,7 @@ def window(mesh, panes, data, style, stone, paint, mats, rng):
     mesh.block((u, .137, bottom - .023), (width + .268, .076, .020), stone, .003)
     crown(mesh, u, top, width, style, stone)
 
-    inset = -.087
+    inset = -.247
     for side in (-1, 1):
         jamb = u + side*(width/2 - .064)
         mesh.block((jamb, .020, z), (.092, .137, h - .110), stone, .008)
@@ -242,8 +242,8 @@ def window(mesh, panes, data, style, stone, paint, mats, rng):
         for a, b in ((bottom+.095, rail-.028),(rail+.028, top-.102)):
             pane_width = (width - .215)/2 - .020
             # A pane is a single face. A rear visible cavity gives it depth.
-            vertices = [(x-pane_width/2, -.113, a), (x-pane_width/2, -.113, b),
-                        (x+pane_width/2, -.113, b), (x+pane_width/2, -.113, a)]
+            vertices = [(x-pane_width/2, -.273, a), (x-pane_width/2, -.273, b),
+                        (x+pane_width/2, -.273, b), (x+pane_width/2, -.273, a)]
             panes.append(vertices, [(0, 1, 2, 3)], mats['glass'])
         mesh.block((u + side*.061, inset + .037, rail - .079), (.027, .027, .061), mats['brass'], .005)
 

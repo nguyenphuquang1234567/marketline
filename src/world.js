@@ -455,6 +455,18 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
     cables.push({ mesh, phase: rand() * TAU });
   }
 
+  function windowReveal(frame, u, bottom, top, width, face, tint, depth) {
+    const thickness = .07;
+    for (const side of [-1, 1]) {
+      frame.box('plaster', tint, u + side * (width / 2 + .018), (bottom + top) / 2,
+        face - depth / 2, thickness, top - bottom, depth);
+    }
+    for (const edge of [bottom, top]) {
+      frame.box('plaster', tint, u, edge, face - depth / 2,
+        width - .035, thickness, depth);
+    }
+  }
+
   function facade(frame, width, depth, levels, tint, trim, doors, access, front, sign, style, detail = false, replacement = null, measuredOpenings = null) {
     const floorHeight = 3.1;
     const signWidth = 3.81;
@@ -518,6 +530,7 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
           }
         }
         if (!open && !replacement) {
+          if (!isDoor) windowReveal(frame, u, opening.bottom, opening.top, w, face, baseTint, .296);
           if (detailedDoor) {
             if (variant === 2) {
               frame.box('flat', 0x201d19, u, center, face - 0.34, w + 0.03, h + 0.025, 0.08);
@@ -666,37 +679,56 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
       // Bring the return just past the ends of the front wall segments.
       // Their coincident side faces otherwise flicker in the Blender export.
       const returnWidth = replaceFront ? .262 : .25;
-      f.box('plaster', shade(tint, side < 0 ? 0.91 : 0.96),
-        side * (width * 0.5 - 0.125), top / 2, 0, returnWidth, top, depth - (replaceFront ? .018 : 0));
       if (access) f.body(side * (width * 0.5 - 0.125), top / 2, 0, 0.25, top, depth);
       for (let y = 3.1; y < top + 0.01; y += 3.1) {
         f.box('plaster', roof, side * width * 0.5, y - 0.075, 0, 0.14, 0.15, depth + 0.23);
       }
       const sidePoint = f.p(side * (width * 0.5 + 0.022), 0, 0);
       const end = local(sidePoint.x, sidePoint.z, angle + side * Math.PI / 2);
+      const wallTint = shade(tint, side < 0 ? .91 : .96);
+      const length = depth - (replaceFront ? .018 : 0);
+      const windowCenters = [-.29 * depth, .18 * depth];
+      const wall = (left, right, bottom, top) => {
+        end.box('plaster', wallTint, (left + right) / 2, (bottom + top) / 2,
+          -.272 + returnWidth / 2, right - left, top - bottom, returnWidth);
+      };
       if (options.service) addServiceEntrance(end, depth, shade(trim, 0.86), shade(tint, 0.8), side > 0);
-      for (const windowX of [-0.29 * depth, 0.18 * depth]) {
-        for (let level = 0; level < levels; level++) {
-          const y = 1.89 + level * 3.1;
-          const w = level === 0 ? 0.85 : 0.96;
-          const h = level === 0 ? 0.96 : 1.12;
-          const surround = shade(tint, 0.93 + (windowX < 0 ? 0.16 : 0));
-          end.box('plaster', surround, windowX, y, -0.007, w + 0.14, h + 0.14, 0.089);
-          end.box('wood', shade(trim, 0.49), windowX, y, 0.046, w, h, 0.023);
+      for (let level = 0; level < levels; level++) {
+        const y = 1.89 + level * 3.1;
+        const w = level === 0 ? .85 : .96;
+        const h = level === 0 ? .96 : 1.12;
+        const bottom = y - h / 2;
+        const upper = y + h / 2;
+        const face = -.272 + returnWidth;
+        wall(-length / 2, length / 2, level * 3.1, bottom);
+        wall(-length / 2, length / 2, upper, (level + 1) * 3.1);
+        let edge = -length / 2;
+        for (const u of windowCenters) {
+          wall(edge, u - w / 2, bottom, upper);
+          edge = u + w / 2;
+          const surround = shade(tint, u < 0 ? 1.09 : .94);
+          windowReveal(end, u, bottom, upper, w, face, surround, .285);
+          end.box('flat', 0x222622, u, y, face - .375, w + .035, h + .035, .027);
+          end.box('glass', 0x38484c, u, y, face - .256, w - .095, h - .09, .012);
+          const joinery = shade(trim, .73);
+          for (const side of [-1, 1]) {
+            end.box('wood', joinery, u + side * (w / 2 - .046), y,
+              face - .23, .059, h - .06, .064);
+          }
+          for (const rail of [bottom + .061, y + .043, upper - .061]) {
+            end.box('wood', joinery, u, rail, face - .225, w - .11, .05, .063);
+          }
+          end.box('wood', joinery, u, y, face - .221, .039, h - .145, .052);
           if (level === 0) {
             for (let bar = -2; bar <= 2; bar++) {
-              end.box('metal', 0x57564e, windowX + bar * 0.14, y, 0.083, 0.022, h, 0.035);
+              end.box('metal', 0x57564e, u + bar * .14, y, face - .061, .021, h - .06, .031);
             }
-            end.box('metal', 0x57564e, windowX, y, 0.091, w, 0.029, 0.036);
-          } else {
-            for (const mirror of [-1, 1]) {
-              end.box('wood', trim, windowX + mirror * 0.43, y, 0.081, 0.28, h, 0.038, mirror * 0.28);
-            }
-            end.box('wood', 0x675e4f, windowX, y, 0.081, 0.032, h, 0.027);
+            end.box('metal', 0x57564e, u, y, face - .05, w - .024, .026, .035);
           }
-          end.box('plaster', surround, windowX, y - h * 0.52, 0.08, w + 0.21, 0.12, 0.29);
-          end.plate('stain', shade(tint, 0.32), windowX, y - h * 0.5 - 0.23, 0.003, w * 1.18, 0.43);
+          end.box('plaster', surround, u, bottom - .031, face + .028, w + .21, .098, .217);
+          end.plate('stain', shade(tint, .32), u, bottom - .23, face + .003, w * 1.18, .43);
         }
+        wall(edge, length / 2, bottom, upper);
       }
       if (depth > 12.7) {
         end.plate('brick', shade(tint, 0.73), depth * 0.34, 0.34, 0.004, 1.15, 0.51);
