@@ -15,3 +15,5 @@ The textures are from [Poly Haven](https://polyhaven.com/textures) and distribut
 | Cloth | [Denim Fabric 03](https://polyhaven.com/a/denim_fabric_03) |
 
 The 1K source sets were resized for browser delivery. Albedos were adjusted to work with the map's vertex colors. OpenGL normals and packed occlusion, roughness, and metallic maps are stored in lossless WebP. Vite embeds the texture files for offline play.
+
+The wood, metal, cloth and shutter normal maps and the wood, metal, cloth, shutter, asphalt and limestone ORM maps use the original 1K PNG downloads converted to lossless WebP. The cloth maps retain the source dimensions of 1024 × 1022.
