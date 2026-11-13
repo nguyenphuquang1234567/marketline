@@ -15,11 +15,11 @@ const defaults = {
   vignette: true, chromatic: false, dynamic: true,
 };
 
-export function loadSettings() {
+export function loadSettings(touch = false) {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('marketline.settings')) || {}; } catch { /* storage unavailable */ }
   return {
-    ...defaults, ...saved,
+    ...defaults, quality: touch ? 'Low' : defaults.quality, ...saved,
     keys: Object.fromEntries(Object.entries(KEYS).map(([key, [, code]]) => [key, saved.keys?.[key] || code])),
   };
 }
@@ -48,6 +48,22 @@ const html = `
   </div>
   <div class="telemetry" id="telemetry" hidden></div>
 </div>
+<div id="touch-controls" hidden aria-label="Touch controls">
+  <div class="touch-stick" hidden aria-hidden="true"><i></i></div>
+  <div class="touch-movement">
+    <button type="button" data-touch="sprint" aria-pressed="false">Sprint</button>
+    <button type="button" data-touch="crouch" aria-pressed="false">Crouch</button>
+  </div>
+  <div class="touch-combat">
+    <button type="button" data-touch="tactical">Smoke</button>
+    <button type="button" data-touch="grenade">Frag</button>
+    <button type="button" data-touch="reload">Reload</button>
+    <button type="button" data-touch="jump">Jump</button>
+    <button type="button" data-touch="ads" aria-pressed="false">Aim</button>
+    <button type="button" data-touch="fire">Fire</button>
+  </div>
+  <button type="button" data-touch="pause" aria-label="Pause">Ⅱ</button>
+</div>
 <div class="overlay" id="menu">
   <div class="corner-mark" aria-hidden="true"><i></i><i></i><i></i></div>
   <div class="cover-meta"><i></i> OFFLINE <span></span> 4 VS 4</div>
@@ -62,6 +78,7 @@ const html = `
     </div>
   </main>
   <div class="menu-footer"><span><b>WASD</b> MOVE</span><span><b>MOUSE</b> AIM</span><span><b>RMB</b> ADS</span><span><b>ESC</b> PAUSE</span></div>
+  <div class="menu-footer touch-help"><span><b>DRAG LEFT</b> MOVE</span><span><b>DRAG RIGHT</b> AIM</span></div>
   <div class="district"><i></i><span>MAP</span><b>AL MARFA</b></div>
   <aside class="settings-panel" id="settings-panel" hidden aria-label="Settings">
     <div class="settings-heading"><h2>SETTINGS</h2><button id="close-settings" class="secondary" aria-label="Close settings">×</button></div>
@@ -171,7 +188,7 @@ export class Interface {
       group.append(label);
     };
     const controls = addGroup('AIM');
-    add(controls, 'Mouse sensitivity', 'sensitivity', { min: .15, max: 3, step: .05 });
+    add(controls, document.documentElement.classList.contains('touch-mode') ? 'Swipe sensitivity' : 'Mouse sensitivity', 'sensitivity', { min: .15, max: 3, step: .05 });
     add(controls, 'ADS sensitivity', 'ads', { min: .2, max: 1, step: .02 });
     add(controls, 'Vertical field of view', 'fov', { min: 58, max: 100, step: 1 });
     add(controls, 'Invert Y', 'invert');

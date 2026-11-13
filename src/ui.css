@@ -134,3 +134,69 @@ h1 { font-size:clamp(64px,8.55vw,172px); font-weight:800; letter-spacing:-.033em
   width:6px; height:6px; background:#ff866d; border-color:#472219; transform:rotate(45deg);
 }
 .crosshair.hostile i { background:#ff917a; box-shadow:0 0 2px #512018; }
+
+.touch-help { display:none }
+.touch-mode #interface { pointer-events:none }
+.touch-mode .overlay { pointer-events:auto }
+.touch-mode #view { touch-action:none }
+.touch-mode .menu-footer:not(.touch-help) { display:none }
+.touch-mode .touch-help { display:flex; bottom:max(var(--edge),env(safe-area-inset-bottom)); left:max(var(--edge),env(safe-area-inset-left)); }
+.touch-mode .menu-content { left:max(var(--edge),env(safe-area-inset-left)); }
+.touch-mode .map-stack { left:var(--touch-left); top:var(--touch-top); }
+.touch-mode .map-frame { width:64px }
+.touch-mode .map-stack p { font-size:10px }
+.touch-mode .match-hud { top:var(--touch-top) }
+.touch-mode .compass,.touch-mode .score { width:144px }
+.touch-mode .score>strong { min-width:32px; font-size:23px }
+.touch-mode .health-hud { left:var(--touch-left); bottom:auto; top:calc(var(--touch-top) + 91px); width:82px; padding:4px 6px; }
+.touch-mode .health-hud span { font-size:9px }
+.touch-mode .health-hud strong { font-size:21px }
+.touch-mode .health-hud i { margin-top:3px }
+.touch-mode .ammo-hud { right:var(--touch-right); bottom:auto; top:calc(var(--touch-top) + 50px); width:82px; padding:4px 6px; }
+.touch-mode .loadout span:last-child,.touch-mode .equipment { display:none }
+.touch-mode .rounds { gap:4px }
+.touch-mode .rounds strong { font-size:29px }
+.touch-mode .rounds b,.touch-mode .rounds span { font-size:15px }
+.touch-mode .feed { right:var(--touch-right); top:calc(var(--touch-top) + 112px); }
+.touch-mode .feed div { font-size:11px; padding:2px 4px; gap:5px; }
+.touch-mode {
+  --touch-left:calc(12px + env(safe-area-inset-left));
+  --touch-right:calc(12px + env(safe-area-inset-right));
+  --touch-top:calc(8px + env(safe-area-inset-top));
+  --touch-bottom:calc(14px + env(safe-area-inset-bottom));
+}
+#touch-controls { position:absolute; inset:0; pointer-events:none }
+#touch-controls button {
+  pointer-events:auto; touch-action:none; width:46px; height:46px; padding:0;
+  border-radius:50%; border:1px solid #e6d29fa0; background:#1a211bd4; color:var(--ink);
+  font-size:13px; text-transform:uppercase; letter-spacing:.04em;
+  -webkit-tap-highlight-color:transparent;
+}
+#touch-controls button.active,#touch-controls button[aria-pressed="true"] {
+  color:#171b19; background:var(--paper); border-color:var(--paper);
+}
+.touch-movement,.touch-combat { position:absolute; display:grid; gap:7px }
+.touch-movement { left:var(--touch-left); bottom:var(--touch-bottom); grid-auto-flow:column }
+.touch-combat {
+  right:var(--touch-right); bottom:var(--touch-bottom);
+  grid-template-columns:46px 62px; align-items:center; justify-items:center;
+}
+#touch-controls [data-touch="fire"] { width:62px; height:62px; font-size:17px; }
+#touch-controls [data-touch="pause"] {
+  position:absolute; top:var(--touch-top); right:var(--touch-right); width:44px; height:44px;
+  border-radius:4px; font-size:19px;
+}
+.touch-stick {
+  position:absolute; width:104px; height:104px; translate:-50% -50%;
+  border:1px solid #e6d29f91; border-radius:50%; background:#171b194d;
+}
+.touch-stick i {
+  position:absolute; inset:30px; border:1px solid #e6d29fc0; border-radius:50%; background:#e6d29f60;
+}
+.touch-dead .touch-combat,.touch-dead .touch-movement { visibility:hidden }
+.touch-mode .health-hud span { white-space:nowrap }
+.touch-mode .score small { font-size:8px; letter-spacing:.06em; white-space:nowrap }
+.touch-mode .settings-panel {
+  right:max(var(--edge),env(safe-area-inset-right));
+  bottom:max(var(--edge),env(safe-area-inset-bottom));
+}

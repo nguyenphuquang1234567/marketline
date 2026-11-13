@@ -12,6 +12,7 @@ import { BotRig } from './bot-rig.js';
 import { WeaponView } from './weapon.js';
 import { SynthAudio } from './audio.js';
 import { Interface, loadSettings } from './ui.js';
+import { TouchControls, touchDevice } from './touch-controls.js';
 import { Effects, randomFor } from './effects.js';
 import { RenderGraph } from './render.js';
 import { loadMarketSky, MARKET_SUN } from './market-sky.js';
@@ -45,7 +46,8 @@ function hitSphere(origin, direction, x, y, z, radius) {
 
 class Marketline {
   constructor() {
-    this.settings = loadSettings();
+    document.documentElement.classList.toggle('touch-mode', touchDevice);
+    this.settings = loadSettings(touchDevice);
     if (QA) this.settings.quality = parameters.get('quality') || this.settings.quality;
     this.audio = new SynthAudio(SEED ^ 0x5812);
     this.ui = new Interface(this.settings, {
@@ -55,6 +57,10 @@ class Marketline {
       fullscreen: () => this.fullscreen(),
       hover: () => this.audio.cue('hover'),
     });
+    this.touch = touchDevice ? new TouchControls(canvas, this.ui.el['touch-controls'], {
+      look: (x, y) => { this.mouseX += x * 2; this.mouseY += y * 2; },
+      pause: () => this.pause(),
+    }) : null;
     this.scene = new THREE.Scene();
     this.weaponScene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(this.settings.fov, 1, .045, 190);
@@ -157,6 +163,7 @@ class Marketline {
   phase(value, details) {
     this.state = value;
     this.ui.phase(value, details);
+    this.touch?.phase(value);
   }
 
   reset() {
@@ -265,7 +272,7 @@ class Marketline {
     this.audio.pause(false);
     this.audio.cue(this.state === 'pause' && !restart ? 'click' : 'start');
     this.phase(this.player.alive ? 'play' : 'dead');
-    this.requestMouse();
+    if (!this.touch) this.requestMouse();
     this.lastFrame = 0;
   }
 
@@ -280,6 +287,7 @@ class Marketline {
   clearInput() {
     this.keys.clear();
     this.pressed.clear();
+    this.touch?.clear();
     this.mouseX = this.mouseY = this.trigger = this.adsButton = this.click = 0;
   }
 
@@ -350,7 +358,10 @@ class Marketline {
   }
 
   action(name) { return this.keys.has(this.settings.keys[name]); }
-  edge(name) { return this.pressed.delete(this.settings.keys[name]); }
+  edge(name) {
+    const touch = this.touch?.pressed.delete(name);
+    return this.pressed.delete(this.settings.keys[name]) || touch;
+  }
 
   look(dt) {
     const x = this.mouseX, y = this.mouseY;
@@ -393,11 +404,15 @@ class Marketline {
       if (this.deathAge >= 3.5) { this.spawnPlayer(false); this.phase('play'); }
       return;
     }
-    const forward = Number(this.action('forward')) - Number(this.action('back'));
-    const strafe = Number(this.action('right')) - Number(this.action('left'));
-    const crouch = this.action('crouch') || this.keys.has('KeyC') && this.settings.keys.crouch === 'ControlLeft';
-    const sprint = this.action('sprint') && forward > .5 && !crouch && !this.adsButton && !this.reloadPending && !this.trigger;
-    const ads = Boolean(this.adsButton) && !sprint;
+    const forward = Number(this.action('forward')) - Number(this.action('back')) + (this.touch?.forward ?? 0);
+    const strafe = Number(this.action('right')) - Number(this.action('left')) + (this.touch?.strafe ?? 0);
+    const crouch = this.touch?.crouch || this.action('crouch') || this.keys.has('KeyC') && this.settings.keys.crouch === 'ControlLeft';
+    const trigger = this.trigger || this.touch?.held.has('fire');
+    const aimHeld = this.adsButton || this.touch?.ads;
+    if (this.touch?.pressed.delete('fire')) this.click = 1;
+    const sprint = (this.action('sprint') || this.touch?.sprint)
+      && forward > .5 && !crouch && !aimHeld && !this.reloadPending && !trigger;
+    const ads = Boolean(aimHeld) && !sprint;
     this.forward.set(Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     this.right.set(Math.cos(this.yaw), 0, Math.sin(this.yaw));
     this.wish.copy(this.forward).multiplyScalar(forward).addScaledVector(this.right, strafe).clampLength(0, 1);
@@ -441,7 +456,7 @@ class Marketline {
     if (this.edge('grenade')) this.throwItem('frag');
 
     this.fireAt = Math.max(0, this.fireAt - dt);
-    if (this.fireAt <= 0 && !this.reloadPending && (this.click || this.trigger && p.auto)) {
+    if (this.fireAt <= 0 && !this.reloadPending && (this.click || trigger && p.auto)) {
       if (p.ammo > 0) this.playerFire(speed, ads, crouch);
       else {
         if (this.click) this.audio.mechanical('empty');
@@ -467,7 +482,7 @@ class Marketline {
     this.kickSide *= Math.exp(-dt * 11);
     this.damageKick *= Math.exp(-dt * 12);
     this.gasTimer = Math.max(0, this.gasTimer - dt);
-    this.shotChain *= Math.exp(-dt * (this.trigger ? 1.8 : 5.8));
+    this.shotChain *= Math.exp(-dt * (trigger ? 1.8 : 5.8));
     this.hurt *= Math.exp(-dt * 4.8);
     this.landing *= Math.exp(-dt * 13);
     this.cameraFov += (this.settings.fov + Number(sprint) * 5 - this.weapon.ads * 20 + this.kick * 9 - this.cameraFov)
@@ -857,7 +872,7 @@ class Marketline {
       snapshot: () => ({
         state: this.state, position: this.player.position.toArray(), ammo: this.player.ammo,
         reserve: this.player.reserve, ads: this.weapon.ads, health: this.player.health, alive: this.player.alive,
-        time: this.elapsed, score: this.scores.slice(), pointerLock: document.pointerLockElement === canvas,
+        yaw: this.yaw, pitch: this.pitch, time: this.elapsed, score: this.scores.slice(), pointerLock: document.pointerLockElement === canvas,
         bots: this.bots.map(b => ({ state: b.state, position: b.position.toArray(), health: b.health, alive: b.alive })),
       }),
       stage: name => this.stage(name),
