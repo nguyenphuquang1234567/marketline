@@ -284,6 +284,8 @@ def main():
                             'al_marfa_facade_roofs', 'al_marfa_facade_shops',
                             'al_marfa_facade_upper', 'al_marfa_facade_wear'):
             importlib.import_module(module_name).build(ctx)
+        from al_marfa_building_facades import build as build_facades
+        build_facades(ctx, layout['buildings'])
     bpy.context.view_layer.update()
     export_district(ctx, dressing_batches(ctx), args.game)
     if not args.base_only:

@@ -11,7 +11,7 @@ try {
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome' });
   try {
     const page = await browser.newPage();
-    await page.route('**/al-marfa-extract', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }));
+    await page.route('**/al-marfa-extract', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js"}}</script>' }));
     await page.goto(new URL('al-marfa-extract', server.resolvedUrls.local[0]).href);
     await page.exposeFunction('writeAlMarfa', (name, base64) =>
       writeFile(resolve(output, name), Buffer.from(base64, 'base64')));
@@ -32,8 +32,8 @@ try {
         import('/src/market-sky.js'),
       ]);
       const scene = new Scene();
-      const facades = [];
-      const world = buildWorld(scene, 2324, { facadeLayout: facades });
+      const facades = [], buildings = [];
+      const world = buildWorld(scene, 2324, { facadeLayout: facades, buildingLayout: buildings });
       await waitForWorldMaterials();
       await loadMarketProps(scene, world.assetPlacements);
       scene.updateMatrixWorld(true);
@@ -81,7 +81,7 @@ try {
       });
       await window.writeAlMarfa('al-marfa-base.glb', base64);
       await window.writeAlMarfa('al-marfa-layout.json', btoa(JSON.stringify({
-        colliders: world.colliders, bounds: world.bounds, spawns: world.spawns, sun: MARKET_SUN.toArray(), facades,
+        colliders: world.colliders, bounds: world.bounds, spawns: world.spawns, sun: MARKET_SUN.toArray(), facades, buildings,
       })));
       return staticMeshes.length;
     });

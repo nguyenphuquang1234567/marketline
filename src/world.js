@@ -299,7 +299,7 @@ function clothTexture(primary, secondary) {
   });
 }
 
-export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = null } = {}) {
+export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = null, buildingLayout = null } = {}) {
   const sceneOffset = scene.children.length;
   const rand = seeded(seed);
   const range = (lo, hi) => lo + (hi - lo) * rand();
@@ -455,7 +455,7 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
     cables.push({ mesh, phase: rand() * TAU });
   }
 
-  function facade(frame, width, depth, levels, tint, trim, doors, access, front, sign, style, detail = false, replacement = null) {
+  function facade(frame, width, depth, levels, tint, trim, doors, access, front, sign, style, detail = false, replacement = null, measuredOpenings = null) {
     const floorHeight = 3.1;
     const signWidth = 3.81;
     const bandOffset = 0.07;
@@ -501,12 +501,13 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
           if (front && floor === 0) addFacadePier(frame, edge, left, face, style, bay);
         }
         edge = u + w / 2;
-        const open = isDoor && access && bay === 0;
+        const open = isDoor && Boolean(access) && bay === 0;
         const detailedDoor = detail && isDoor;
         const variant = open ? 0 : isDoor ? (bay % 3 === 0 ? 1 : 2) : Math.floor(rand() * 5);
         const opening = { floor, bay, u, w, h, center, bottom: y + (open ? 0.027 : openingBottom),
           top: y + openingTop, open, balcony, variant };
         if (replacement) replacement.openings.push(opening);
+        measuredOpenings?.push(opening);
         if (!open) {
           if (access) {
             const surface = variant === 4 ? 'glass' : variant === 2 ? 'metal' : 'wood';
@@ -656,6 +657,9 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
     const trim = options.trim ?? pick(accents);
     const top = levels * 3.1;
     const roof = shade(tint, 0.81);
+    const measured = buildingLayout ? { x, z, width, depth, angle, levels, streetFront: Boolean(options.streetFront),
+      front: [], rear: [] } : null;
+    if (measured) buildingLayout.push(measured);
     const replaceFront = facadeLayout && options.streetFront;
     if (!access) f.body(0, top * 0.5, 0, width, top, depth);
     for (const side of [-1, 1]) {
@@ -714,8 +718,8 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
       faceX: f.p(0, 0, depth / 2 + 0.012).x, angle, width, depth, levels, style, tint, trim, sign, openings: [],
     } : null;
     if (replacement) facadeLayout.push(replacement);
-    facade(f, width, depth, levels, tint, trim, true, access, true, sign, style, options.streetFront, replacement);
-    facade(rear, width, depth, levels, shade(tint, 0.94), trim, true, access && options.through, false, null, 'service');
+    facade(f, width, depth, levels, tint, trim, true, access, true, sign, style, options.streetFront, replacement, measured?.front);
+    facade(rear, width, depth, levels, shade(tint, 0.94), trim, true, access && options.through, false, null, 'service', false, null, measured?.rear);
     if (options.canopy) {
       const { center, span, projection, finish } = options.canopy;
       addStoreCanopy(f, width * center, depth / 2 + 0.012, Math.min(span, width - 1.2), projection, finish);
