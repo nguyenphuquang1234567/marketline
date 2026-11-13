@@ -79,6 +79,7 @@ class Shop:
         self.frames = Fabrication(collection, "SM_Front_" + self.name + "_Surrounds")
         self.panels = Fabrication(collection, "SM_Front_" + self.name + "_Inserts")
         self.glass = Fabrication(collection, "SM_Front_" + self.name + "_Glazing")
+        self.fittings = Fabrication(collection, "SM_Front_" + self.name + "_Fittings")
 
     def block(self, batch, u, d, h, width, depth, height, finish, bevel=.004, roll=0):
         batch.block((u, -d, h), (width, depth, height), self.mats[finish], bevel, roll)
@@ -95,7 +96,7 @@ class Shop:
         batch.append(verts, faces, self.mats[finish])
 
     def finish(self):
-        for batch in (self.frames, self.panels, self.glass):
+        for batch in (self.frames, self.panels, self.glass, self.fittings):
             if not batch.faces:
                 continue
             obj = batch.finish(.84)
@@ -103,6 +104,63 @@ class Shop:
             obj.rotation_euler.z = self.turn
             if batch is self.glass:
                 obj["worldCastShadow"] = False
+
+    def fastener(self, u, d, h, radius, finish):
+        self.pipe(self.fittings, [(u, d - .003, h), (u, d + .003, h)], radius, finish, 6)
+
+    def masonry_details(self, opening):
+        u, width, top, bottom = (opening[k] for k in ("u", "w", "top", "bottom"))
+        batch = self.fittings
+        if not opening["open"]:
+            # Water table has a sloped top, projected nose and a dark drip edge.
+            left, right = u - width / 2 - .105, u + width / 2 + .105
+            h = bottom - .065
+            for x in (left + .175, right - .175):
+                self.profile(batch, [(x - .072, h - .157), (x + .072, h - .157),
+                                     (x + .082, h + .011), (x - .082, h + .011)],
+                             .003, .167, self.stone)
+            self.block(batch, u, .178, h + .012, right - left, .075, .036, "sill", .006)
+            self.block(batch, u, .184, h - .013, right - left - .048, .029, .013, "joint", .002)
+
+        if self.kind in ("display", "joinery"):
+            # Three masonry courses above the lintel, with staggered joints.
+            course_width = width + .34
+            for row in range(3):
+                pieces = 5 if row == 1 else 6
+                step = course_width / pieces
+                for j in range(pieces):
+                    x = u - course_width / 2 + (j + .5) * step
+                    projection = .030 + .005 * sin(j * 2.7 + row * 4 + u)
+                    self.block(batch, x, projection, top + .211 + row * .050,
+                               step - .007, .072, .043, self.stone, .004)
+
+    def shutter_fittings(self, u, width, d, lo, hi, top):
+        batch = self.fittings
+        for side in (-1, 1):
+            x = u + side * (width / 2 - .039)
+            for fraction in (.10, .36, .64, .9):
+                self.fastener(x, -.109, lo + (hi - lo) * fraction, .008, "steel")
+            x = u + side * (width / 2 - .117)
+            self.block(batch, x, -.014, top - .069, .066, .022, .11, "iron", .006)
+            for y in (top - .104, top - .035):
+                self.fastener(x, .000, y, .009, "steel")
+        for x in (u - width * .24, u + width * .24):
+            self.block(batch, x, d + .054, lo - .014, .085, .027, .041, "steel", .006)
+            self.fastener(x, d + .070, lo - .014, .008, "iron")
+
+    def glazed_fittings(self, x, d, lo, hi, width, hinge_side):
+        batch = self.fittings
+        # Interior shelf and exposed brass glazing clips.
+        shelf = lo + (hi - lo) * .27
+        self.block(batch, x, d - .078, shelf, width - .047, .112, .026, "cut", .004)
+        for side in (-1, 1):
+            edge = x + side * (width / 2 - .017)
+            for y in (lo + .088, hi - .088):
+                self.block(batch, edge, d + .029, y, .025, .016, .048, "brass", .003)
+                self.fastener(edge, d + .040, y, .005, "iron")
+        hinge = x + hinge_side * (width / 2 + .034)
+        for height in (lo - .31, hi + .116):
+            self.fastener(hinge, d + .062, height, .007, "steel")
 
     def surround(self, opening):
         u, width, top = (opening[k] for k in ("u", "w", "top"))
@@ -272,6 +330,7 @@ class Shop:
         self.block(batch, u, d + .003, lo - .019, clear, .091, .058, "iron", .005)
         self.block(batch, u, d + .027, lo - .041, clear + .011, .033, .019, "rubber", .003)
         self.lock(u + (clear * .29 if wide else 0.), d + .013, lo + .143, True)
+        self.shutter_fittings(u, width, d, lo, hi, top)
 
     def workshop_gate(self, opening):
         u, width, bottom, top = (opening[k] for k in ("u", "w", "bottom", "top"))
@@ -346,6 +405,7 @@ class Shop:
             pw = leaf_width - .132
             lo, hi = pane_bottom, pane_top - .034
             self.window_dressing(x, pw, lo, hi, d, side)
+            self.glazed_fittings(x, d, lo, hi, pw, side)
             self.window_pane(x, pw, lo, hi, d + .014)
             self.window_pane(x, pw, pane_top + .045, top - .114, d + .011)
             for k in range(3):
@@ -428,6 +488,7 @@ class Shop:
                           key=lambda o: o["bay"])
         for opening in openings:
             self.surround(opening)
+            self.masonry_details(opening)
             if opening["open"]:
                 self.open_portal(opening)
                 continue
