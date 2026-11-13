@@ -20,6 +20,7 @@ export class SoldierFallContact {
     this.ik = new SoldierLimbIK();
     this.pelvis = bones.get('pelvis');
     this.chest = bones.get('chest');
+    this.head = bones.get('head');
     this.limbs = ['L', 'R'].flatMap(side => [
       this.limb(bones, side, ['upper_arm', 'forearm', 'hand'], ['fingers', 'fingertips']),
       this.limb(bones, side, ['thigh', 'shin', 'foot']),
@@ -30,6 +31,8 @@ export class SoldierFallContact {
     this.axis = new Vector3();
     this.target = new Vector3();
     this.rotation = new Quaternion();
+    this.targetRotation = new Quaternion();
+    this.parentRotation = new Quaternion();
     this.push = new Vector3();
     this.probe = new Vector3();
   }
@@ -105,6 +108,35 @@ export class SoldierFallContact {
       limb.end.getWorldPosition(this.target);
       limb.end.getWorldQuaternion(this.rotation);
       this.target.y -= release;
+      this.ik.solve(limb.upper, limb.middle, limb.end, this.target, this.rotation, yaw);
+    }
+  }
+
+  settleProne(root, amount, yaw) {
+    let torso = Infinity;
+    for (const { vertex, bone } of this.surface) {
+      if (upperBody.has(bone) || lowerBody.has(bone)) torso = Math.min(torso, this.vertex(vertex).y);
+    }
+    const drop = MathUtils.clamp(torso - this.floorY - .018, 0, .24) * amount;
+    root.position.y -= drop;
+    root.updateMatrixWorld(true);
+
+    // Release the helmet from the authored downward pitch before resolving
+    // penetration. Otherwise the helmet holds the entire torso off the floor.
+    this.axis.set(1, 0, 0).applyAxisAngle(UP, yaw);
+    this.rotation.setFromAxisAngle(this.axis, .72 * amount);
+    this.head.getWorldQuaternion(this.targetRotation);
+    this.head.parent.getWorldQuaternion(this.parentRotation).invert();
+    this.head.quaternion.copy(this.parentRotation).multiply(this.rotation).multiply(this.targetRotation);
+    this.head.updateMatrixWorld(true);
+    for (const limb of this.limbs) {
+      let low = Infinity;
+      for (const { vertex } of limb.surface) low = Math.min(low, this.vertex(vertex).y);
+      const lift = this.floorY + GAP - low;
+      if (lift < .001) continue;
+      limb.end.getWorldPosition(this.target);
+      limb.end.getWorldQuaternion(this.rotation);
+      this.target.y += Math.min(.24, lift * 1.2);
       this.ik.solve(limb.upper, limb.middle, limb.end, this.target, this.rotation, yaw);
     }
   }

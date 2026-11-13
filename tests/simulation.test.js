@@ -504,6 +504,51 @@ test('soldier falls settle on either side and clear walls and low obstacles', as
   }
 });
 
+test('a face-down fall settles onto the ground', async () => {
+  const asset = await loadSoldierAsset();
+  const point = new Vector3();
+  try {
+    for (const height of [0, .68]) {
+      const physics = new StaticBVH([]);
+      const controller = new CharacterController(physics, vector(0, height, 0));
+      controller.step(1 / 120, { wish: vector(0, 0, 0) });
+      const rig = new BotRig(new Group(), 0, 0, asset.templates[0]);
+      try {
+        rig.pose({
+          controller, position: controller.position, velocity: controller.velocity,
+          yaw: 0, pitch: 0, kick: 0, clock: .5, reloading: 0, height: controller.height, state: 'engage', visibleTarget: true,
+        }, physics, 1 / 60);
+        rig.fall(vector(0, .05, -1), controller.velocity);
+        const { mesh, root } = rig.soldier;
+        let gaps;
+        for (let tick = 0; tick <= 240; tick++) {
+          rig.tumble(physics, 1 / 120);
+          if (tick % 8) continue;
+          root.updateMatrixWorld(true);
+          let floor = Infinity;
+          for (let vertex = 0; vertex < mesh.geometry.attributes.position.count; vertex++) {
+            mesh.getVertexPosition(vertex, point).applyMatrix4(mesh.matrixWorld);
+            floor = Math.min(floor, point.y);
+          }
+          assert.ok(floor > -.004, `floor penetration at tick ${tick}: ${floor} m`);
+          gaps = { floor, chest: Infinity, pelvis: Infinity };
+          for (const { vertex, bone } of asset.templates[0].fallSurface) {
+            if (bone !== 'chest' && bone !== 'pelvis') continue;
+            mesh.getVertexPosition(vertex, point).applyMatrix4(mesh.matrixWorld);
+            gaps[bone] = Math.min(gaps[bone], point.y);
+          }
+        }
+        assert.equal(rig.soldier.fallClip, 'death_forward');
+        assert.ok(gaps.floor < .028 && gaps.chest < .055 && gaps.pelvis < .09, JSON.stringify(gaps));
+      } finally {
+        rig.dispose();
+      }
+    }
+  } finally {
+    asset.dispose();
+  }
+});
+
 test('a fast reactive tin hits a thin static wall and stops', () => {
   const physics = new StaticBVH([box([2.3, 0, -2], [2.34, 4, 2], 'metal')]);
   const rigid = new RigidWorld(physics);

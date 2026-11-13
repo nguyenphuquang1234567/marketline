@@ -379,8 +379,10 @@ export class SoldierAnimator {
     }
     this.root.updateMatrixWorld(true);
     this.approachCover(age);
-    if (this.fallClip === 'death_left' || this.fallClip === 'death_right') {
-      const settle = smoothstep(phase, .59, .94);
+    const settle = smoothstep(phase, .59, .94);
+    if (this.fallClip === 'death_forward' && settle > 0) {
+      this.fallContact.settleProne(this.root, settle, this.fallYaw);
+    } else if (this.fallClip === 'death_left' || this.fallClip === 'death_right') {
       const side = this.fallClip === 'death_left' ? -1 : 1;
       if (settle > 0) this.fallContact.settleSide(this.root, settle, side, this.fallYaw);
     }
