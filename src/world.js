@@ -995,19 +995,44 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
     const wood = pick([0x8b7456, 0x775e45, 0x9e805b]);
     for (const u of [-width / 2, width / 2]) {
       for (const v of [-depth / 2, depth / 2]) {
+        const top = v < 0 ? 2.84 : 2.55;
         f.box('wood', wood, u, 1.29 + (v < 0 ? 0.13 : 0), v, 0.113, v < 0 ? 2.84 : 2.52, 0.112);
         f.box('metal', 0x626150, u, 0.12, v, 0.134, 0.2, 0.131);
+        f.body(u, top / 2, v, 0.113, top, 0.112, 'wood');
       }
     }
     f.box('wood', wood, 0, 2.83, -depth / 2, width + 0.34, 0.115, 0.118);
     f.box('wood', shade(wood, 0.77), 0, 2.306, depth / 2, width + 0.2, 0.08, 0.08);
     awning(f.p(0, 2.87, -depth / 2 - 0.06), angle, width + 0.46, depth + 0.22, style, false, depth + .06);
     const tableZ = 0.06;
-    f.box('wood', shade(wood, 1.23), 0, 0.9, tableZ, width * 0.91, 0.103, 1.1);
+    // Rough-sawn boards sit on a load-bearing frame. Vary the ends and
+    // color without consuming the layout RNG used for subsequent placements.
+    const plankDepth = 1.1 / 5;
+    for (let plank = 0; plank < 5; plank++) {
+      const overhang = .009 * Math.sin(x + z + plank * 3.7);
+      const tint = shade(wood, 1.08 + .17 * Math.sin(plank * 2.2 + style));
+      const edge = tableZ + (plank - 2) * plankDepth;
+      f.box('wood', tint, overhang, .923, edge, width * .91 + overhang, .055, plankDepth - .003);
+      for (const side of [-1, 1]) {
+        f.box('metal', 0x51463a, side * width * .392, .951, edge, .012, .004, .012);
+      }
+    }
+    for (const edge of [-.44, .43]) {
+      f.box('wood', shade(wood, .81), 0, .843, tableZ + edge, width * .85, .115, .067);
+    }
+    for (const side of [-1, 1]) {
+      f.box('wood', shade(wood, .92), side * width * .4, .843, tableZ, .07, .115, .88);
+    }
     const cloth = [0x956742, 0x5a7974, 0x77654a, 0x8a5b4a][style];
     dressStall(f, width, tableZ, cloth, shade(wood, .89));
     reinforceAwning(f, width, depth);
-    f.box('wood', shade(wood, 0.68), 0, 0.2, tableZ, width * 0.9, 0.089, 0.87);
+    for (let slat = 0; slat < 5; slat++) {
+      f.box('wood', shade(wood, .68 + slat % 3 * .065), 0, .218, tableZ + (slat - 2) * .172,
+        width * .87, .039, .165);
+    }
+    for (const side of [-1, 1]) {
+      f.box('wood', shade(wood, .76), side * width * .4, .174, tableZ, .084, .05, .93);
+    }
     for (const u of [-width * 0.4, width * 0.4]) {
       for (const v of [-0.46, 0.44]) f.box('wood', wood, u, 0.42, tableZ + v, 0.095, 0.84, 0.099);
     }
