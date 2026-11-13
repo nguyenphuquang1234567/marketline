@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { createScannedMaterial } from './world-materials.js';
+import { paintedSteel } from './street-finishes.js';
 
 const TINS = [
   [-1.9, 43.8], [3.2, 43.1], [-3.8, 35.8], [2.9, 32.9], [-2.2, 24.7],
@@ -9,18 +11,25 @@ const BOXES = [[-3.6, 38.2], [3.9, 34.5], [-3.2, 18.9], [4.8, -8.2], [-4.1, -30.
 
 export function makeLooseProps(scene, rigid, physics, random) {
   const props = [];
+  const wood = createScannedMaterial('wood');
+  wood.vertexColors = false;
+  const paleWood = wood.clone();
+  const endWood = wood.clone();
+  for (const [material, color] of [[wood, 0xa48769], [paleWood, 0xc3a581], [endWood, 0x8b7660]]) {
+    material.color.setHex(color);
+    material.onBeforeCompile = wood.onBeforeCompile;
+    material.customProgramCacheKey = wood.customProgramCacheKey;
+  }
   const shared = {
     tin: new THREE.CylinderGeometry(.085, .078, .185, 14, 1),
     rim: new THREE.CylinderGeometry(.088, .088, .013, 14, 1),
     grip: new THREE.TorusGeometry(.024, .0048, 4, 10),
     box: new THREE.BoxGeometry(1, 1, 1),
     darkMetal: new THREE.MeshStandardMaterial({ color: 0x77746a, metalness: .65, roughness: .47 }),
-    paleWood: new THREE.MeshStandardMaterial({ color: 0x927355, roughness: .92 }),
-    wood: new THREE.MeshStandardMaterial({ color: 0x73563f, roughness: .89 }),
-    endWood: new THREE.MeshStandardMaterial({ color: 0x574637, roughness: .93 }),
-    paintedTin: [0x78776c, 0x894f37, 0x47666e, 0x827346].map(color => new THREE.MeshStandardMaterial({
-      color, metalness: .41, roughness: .61,
-    })),
+    paleWood, wood, endWood,
+    paintedTin: [0x78776c, 0x894f37, 0x47666e, 0x827346].map(color => paintedSteel(
+      new THREE.MeshStandardMaterial({ color, metalness: .05, roughness: .58 }), 'loose-tin', 1.5, 0,
+    )),
   };
   const at = new THREE.Vector3();
   const down = new THREE.Vector3(0, -1, 0);

@@ -1,9 +1,36 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { createScannedMaterial } from './world-materials.js';
+import { paintedSteel } from './street-finishes.js';
 import propsURL from './assets/market-props.glb?url&inline';
 
 export async function loadMarketProps(scene, placements) {
   const { scene: library } = await new GLTFLoader().loadAsync(propsURL);
+  const timber = createScannedMaterial('wood');
+  const fiber = createScannedMaterial('cloth');
+  const clay = createScannedMaterial('limestone');
+  const finished = new Set();
+  library.traverse(part => {
+    if (!part.isMesh) return;
+    const material = part.material;
+    if (finished.has(material)) return;
+    finished.add(material);
+    if (material.name === 'M_CrateTimber') {
+      // The Blender crate aligns the grain with U on every board.
+      material.roughnessMap = timber.roughnessMap;
+      material.roughness = 1;
+    } else if (material.name === 'M_PalmFiber') {
+      material.normalMap = fiber.normalMap;
+      material.normalScale.setScalar(.34);
+      material.roughnessMap = fiber.roughnessMap;
+      material.roughness = 1;
+    } else if (material.name === 'M_Terracotta') {
+      material.roughnessMap = clay.roughnessMap;
+      material.roughness = 1;
+    } else if (material.name === 'M_PatinatedIron') {
+      paintedSteel(material, 'market-iron', 1.25, 0);
+    }
+  });
   library.updateMatrixWorld(true);
   const groups = new Map();
   for (const placement of placements) {

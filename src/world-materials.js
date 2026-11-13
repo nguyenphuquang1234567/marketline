@@ -23,8 +23,21 @@ export const WORLD_MATERIAL_METERS = Object.fromEntries(
 
 const loader = new THREE.TextureLoader();
 const textureLoads = [];
+const scannedTextures = new Map();
 
 const weathering = {
+  wood: /* glsl */ `
+    vec2 grain = vMapUv;
+    float split = marketSurfaceNoise(grain * vec2(115., 5.));
+    float fibers = marketSurfaceNoise(grain * vec2(260., 17.));
+    float gray = marketSurfaceNoise(grain * vec2(9., 3.) + 7.);
+    float abrasion = smoothstep(.55, .84, gray * .72 + split * .28);
+    float dust = (1. - smoothstep(.05, .64, marketSurfacePosition.y)) * gray;
+    diffuseColor.rgb *= mix(.79, 1.21, fibers) * mix(.86, 1.11, split);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.15, 1.22, 1.35), abrasion * .6);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.24, .185, .124), dust * .28);
+    roughnessFactor = mix(roughnessFactor, .94, max(abrasion * .65, dust));
+  `,
   plaster: /* glsl */ `
     vec2 wall = vec2( marketSurfacePosition.x + marketSurfacePosition.z, marketSurfacePosition.y );
     float plasterClouds = marketSurfaceNoise( wall * vec2( 0.29, 0.62 ) );
@@ -181,6 +194,8 @@ function addWeathering(material, kind) {
 
 function loadTexture(kind, channel, colorSpace, anisotropy) {
   const path = `./assets/world-textures/${kind}-${channel}.webp`;
+  const existing = scannedTextures.get(path);
+  if (existing) return existing;
   const url = textures[path];
   if (!url) throw new Error(`Missing map texture ${path}`);
   let complete;
@@ -190,6 +205,7 @@ function loadTexture(kind, channel, colorSpace, anisotropy) {
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.colorSpace = colorSpace;
   texture.anisotropy = anisotropy;
+  scannedTextures.set(path, texture);
   return texture;
 }
 
@@ -219,6 +235,7 @@ export function createScannedMaterial(kind) {
 }
 
 export async function waitForWorldMaterials() {
-  const paths = (await Promise.all(textureLoads)).filter(Boolean);
+  scannedTextures.clear();
+  const paths = (await Promise.all(textureLoads.splice(0))).filter(Boolean);
   if (paths.length) throw new Error(`Could not decode map textures: ${paths.join(', ')}`);
 }

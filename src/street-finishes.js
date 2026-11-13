@@ -18,11 +18,16 @@ float streetNoise(vec3 p) {
 }
 `;
 
-function paintedSteel(material, name, corrosion, coat, burnt = false) {
+export function paintedSteel(material, name, corrosion, coat, burnt = false) {
   material.customProgramCacheKey = () => 'marketline-steel-' + name;
   material.onBeforeCompile = shader => {
     shader.vertexShader = 'varying vec3 streetPosition;\n' + shader.vertexShader.replace(
-      '#include <project_vertex>', '#include <project_vertex>\nstreetPosition = (modelMatrix * vec4(transformed, 1.)).xyz;',
+      '#include <project_vertex>', `#include <project_vertex>
+      vec4 surfacePoint = vec4(transformed, 1.);
+      #ifdef USE_INSTANCING
+        surfacePoint = instanceMatrix * surfacePoint;
+      #endif
+      streetPosition = (modelMatrix * surfacePoint).xyz;`,
     );
     shader.fragmentShader = finishNoise + shader.fragmentShader
       .replace('#include <color_fragment>', /* glsl */ `
@@ -33,12 +38,16 @@ function paintedSteel(material, name, corrosion, coat, burnt = false) {
         float variation = streetNoise(p * 6. + vec3(5., 0., 0.));
         float wash = smoothstep(.38, .81, runoff * .65 + variation * .35);
         float dust = wash * mix(.28, .91, 1. - smoothstep(.16, .96, p.y));
-        float chip = smoothstep(.66, .80, fleck * .44 + runoff * .30 + variation * .26);
+        float cluster = streetNoise(p * 13. + vec3(3., 0., 7.));
+        float scratches = streetNoise(p * vec3(8., 138., 12.));
+        float chip = smoothstep(.59, .76, fleck * .24 + runoff * .19 + variation * .26 + cluster * .31);
+        float exposed = smoothstep(.79, .92, scratches) * smoothstep(.55, .84, cluster);
         chip = min(1., chip * ${corrosion.toFixed(3)}) * (1. - smoothstep(9., 20., length(vViewPosition)));
         diffuseColor.rgb *= .80 + .29 * variation + .07 * fleck - .20 * wash;
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.20, .142, .088), dust * .44);
         vec3 oxide = mix(vec3(.05, .032, .023), vec3(.21, .095, .043), fleck);
         diffuseColor.rgb = mix(diffuseColor.rgb, oxide, chip * .86);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.48, .43, .36), exposed * (1. - chip));
         float scorch = 0.;
         ${burnt ? `
           float broad = streetNoise(p * vec3(1.9, 3.5, 2.0) + vec3(7., .3, 0.));
@@ -56,7 +65,7 @@ function paintedSteel(material, name, corrosion, coat, burnt = false) {
       `)
       .replace('#include <metalnessmap_fragment>', /* glsl */ `
         #include <metalnessmap_fragment>
-        metalnessFactor *= 1. - min(.8, chip + dust * .4 + scorch * .5);
+        metalnessFactor = mix(metalnessFactor, .92, exposed) * (1. - min(1., chip + dust * .4 + scorch * .5));
       `)
       .replace('#include <normal_fragment_maps>', /* glsl */ `
         #include <normal_fragment_maps>
@@ -177,14 +186,21 @@ function sandbagFabric(cloth) {
   material.customProgramCacheKey = () => 'marketline-sandbag';
   material.onBeforeCompile = shader => {
     shader.vertexShader = 'varying vec3 streetPosition;\n' + shader.vertexShader.replace(
-      '#include <project_vertex>', '#include <project_vertex>\nstreetPosition = (modelMatrix * vec4(transformed, 1.)).xyz;',
+      '#include <project_vertex>', `#include <project_vertex>
+      vec4 surfacePoint = vec4(transformed, 1.);
+      #ifdef USE_INSTANCING
+        surfacePoint = instanceMatrix * surfacePoint;
+      #endif
+      streetPosition = (modelMatrix * surfacePoint).xyz;`,
     );
     shader.fragmentShader = finishNoise + shader.fragmentShader.replace('#include <color_fragment>', /* glsl */ `
       #include <color_fragment>
       float soiling = smoothstep(.37, .76, streetNoise(streetPosition * 9.));
       float foldShade = streetNoise(streetPosition * vec3(21., 29., 21.));
       diffuseColor.rgb *= mix(vec3(1.02, .98, .94), vec3(.58, .46, .34), soiling * .7);
+      float settledDust = (1. - smoothstep(.04, .45, streetPosition.y)) * (.28 + .72 * foldShade);
       diffuseColor.rgb *= mix(.88, 1.13, foldShade);
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.24, .175, .112), settledDust * .47);
     `);
   };
   return material;
@@ -215,13 +231,20 @@ function truckGlazing() {
 
 export function createStreetMaterials(materials) {
   materials.sandbag = sandbagFabric(materials.cloth);
+  const steelRelief = materials.metal.normalMap;
+  materials.enamel.normalMap = steelRelief;
+  materials.enamel.normalScale.setScalar(.18);
   paintedSteel(materials.enamel, 'vehicle', .87, .88);
   materials.coatedSteel = paintedSteel(new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: .52, metalness: .27,
+    vertexColors: true, roughness: .57, metalness: .06,
   }), 'painted', 1.48, 0);
   materials.burntSteel = paintedSteel(new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: .57, metalness: .22,
   }), 'scorched', 1.35, 0, true);
+  for (const [material, strength] of [[materials.coatedSteel, .33], [materials.burntSteel, .42]]) {
+    material.normalMap = steelRelief;
+    material.normalScale.setScalar(strength);
+  }
   materials.cabinGlass = truckGlazing();
   materials.autoGlass.roughness = .21;
   materials.autoGlass.metalness = .56;

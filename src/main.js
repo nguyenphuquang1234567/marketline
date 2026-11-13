@@ -118,9 +118,9 @@ class Marketline {
       new GLTFLoader().loadAsync(soldierURL),
       loadMarketSky(),
       loadMarketProps(this.scene, this.world.assetPlacements),
-      waitForWorldMaterials(),
       useBlenderMap ? loadAlMarfa(this.world) : null,
     ]);
+    await waitForWorldMaterials();
     this.soldiers = soldierVariants(soldier);
     this.playerRig = new BotRig(corpse, 7, 0, this.soldiers.templates[0]);
     corpse.visible = false;
