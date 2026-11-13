@@ -85,6 +85,7 @@ class Marketline {
     this.traceStart = new THREE.Vector3();
     this.traceDirection = new THREE.Vector3();
     this.soundRay = new THREE.Vector3();
+    this.voicePosition = new THREE.Vector3();
     this.deathDirection = new THREE.Vector3();
     this.deathBoom = new THREE.Vector3();
     this.propImpulse = new THREE.Vector3();
@@ -640,6 +641,12 @@ class Marketline {
       this.audio.cue(killed ? 'kill' : head ? 'head' : 'hit');
     }
     if (!killed) return;
+    if (target === this.player) this.audio.deathGrunt();
+    else {
+      const voicePosition = this.voicePosition.copy(target.position);
+      voicePosition.y += target.height * .76;
+      this.audio.deathGrunt(voicePosition, this.occluded(voicePosition));
+    }
     if (target === this.player) {
       target.alive = false;
       this.deathDirection.copy(direction).normalize();

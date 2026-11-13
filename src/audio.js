@@ -1,3 +1,11 @@
+import gruntOne from './assets/death-voice/547195.wav?url&inline';
+import gruntTwo from './assets/death-voice/547192.wav?url&inline';
+import gruntThree from './assets/death-voice/413173.wav?url&inline';
+
+const rifleSamples = import.meta.glob('./assets/saltline-rifle/*.wav', {
+  eager: true, query: '?url&inline', import: 'default',
+});
+
 const ROOM_SIZE = 343;
 const TAU = Math.PI * 2;
 const MAX_VOICES = 36;
@@ -106,6 +114,11 @@ export class SynthAudio {
   constructor(seed = 2324) {
     this.random = noiseSeed(seed ^ 0xb22ab341);
     this.context = null;
+    this.deathVoices = [];
+    this.rifleBuffers = new Map();
+    this.rifleVariant = 0;
+    this.lastRifleTail = -Infinity;
+    this.lastDeathVoice = null;
     this.active = new Set();
     this.ambience = [];
     this.position = { x: 0, y: 0, z: 0 };
@@ -129,6 +142,21 @@ export class SynthAudio {
       if (!Audio) return;
       this.context = new Audio({ latencyHint: 'interactive' });
       this.build();
+      const context = this.context;
+      for (const [path, url] of Object.entries(rifleSamples)) {
+        fetch(url).then(response => response.arrayBuffer()).then(data => context.decodeAudioData(data))
+          .then(buffer => {
+            if (this.context === context) this.rifleBuffers.set(path.split('/').at(-1), buffer);
+          }).catch(() => {});
+      }
+      Promise.allSettled([gruntOne, gruntTwo, gruntThree].map(async url => {
+        const response = await fetch(url);
+        return context.decodeAudioData(await response.arrayBuffer());
+      })).then(results => {
+        if (this.context === context) {
+          this.deathVoices = results.filter(result => result.status === 'fulfilled').map(result => result.value);
+        }
+      });
     }
     if (this.context.state !== 'running') await this.context.resume().catch(() => {});
   }
@@ -440,6 +468,19 @@ export class SynthAudio {
   gun(position, occluded = false) {
     const voice = this.start('weapon', position, occluded, position ? 0.24 : 0.12, !position);
     if (!voice) return;
+    const shot = this.rifleBuffers.get(`rifle_shot-${this.rifleVariant++ % 4}.wav`);
+    if (shot) {
+      const rate = .988 + this.random() * .024;
+      this.playRifleSample(voice, shot, rate, position ? .85 : 1);
+      if (!position && voice.t - this.lastRifleTail > .28) {
+        const tail = this.rifleBuffers.get(this.profileOpen > .5 ? 'rifle_tail_out-0.wav' : 'rifle_tail_in-0.wav');
+        if (tail) {
+          this.playRifleSample(voice, tail, 1, .43);
+          this.lastRifleTail = voice.t;
+        }
+      }
+      return;
+    }
     const r = 0.88 + this.random() * 0.26;
     const near = 1 - clamp(voice.distance / 38, 0, 0.9);
     const mechanical = 0.3 + near * 0.7;
@@ -452,6 +493,17 @@ export class SynthAudio {
       this.noise(voice, 'white', 3070 * r, 0.91, 0.18 * mechanical, 0.0004, 0.022, 0.044 + this.random() * 0.005);
       this.tone(voice, 331 * r, 246 * r, 0.074 * mechanical, 0.0011, 0.026, 0.048, 'triangle');
     }
+  }
+
+  playRifleSample(voice, buffer, rate, volume) {
+    const source = this.context.createBufferSource();
+    const gain = this.context.createGain();
+    gain.gain.value = volume;
+    voice.nodes.push(gain);
+    source.buffer = buffer;
+    source.playbackRate.value = rate;
+    source.connect(gain).connect(voice.input);
+    this.source(voice, source, voice.t, voice.t + buffer.duration / rate + .005);
   }
 
   impact(material, position, occluded = false) {
@@ -531,6 +583,25 @@ export class SynthAudio {
     const pitch = 0.83 + this.random() * 0.29;
     this.noise(voice, 'white', 2650 * pitch, 1.6, 0.29, 0.004, 0.082);
     this.tone(voice, 1830 * pitch, 414 * pitch, 0.12, 0.004, 0.097, 0.001, 'triangle');
+  }
+
+  deathGrunt(position, occluded = false) {
+    const variants = this.deathVoices.length > 1
+      ? this.deathVoices.filter(sample => sample !== this.lastDeathVoice) : this.deathVoices;
+    if (!variants.length || this.suspended) return;
+    if (position && Math.hypot(position.x - this.position.x, position.y - this.position.y,
+      position.z - this.position.z) > 32) return;
+    const voice = this.start('character', position, occluded, .11);
+    if (!voice) return;
+    const source = this.context.createBufferSource();
+    source.buffer = variants[Math.floor(this.random() * variants.length)];
+    this.lastDeathVoice = source.buffer;
+    const rate = .95 + this.random() * .10;
+    source.playbackRate.value = rate;
+    voice.input.gain.value *= position ? 1.15 : .82;
+    source.connect(voice.input);
+    const start = voice.t + .047;
+    this.source(voice, source, start, start + source.buffer.duration / rate + .01);
   }
 
   cue(kind) {
