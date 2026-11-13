@@ -274,12 +274,13 @@ function clothTexture(primary, secondary) {
     ctx.fillRect(i * 32 + 4, 0, 13, 128);
     ctx.fillRect(i * 32 + 22, 0, 2.5, 128);
   }
-  // Decorative bazaar woven border band near awning front edge
-  ctx.fillStyle = 'rgba(38,28,20,0.34)';
-  ctx.fillRect(0, 108, 256, 8);
-  ctx.fillStyle = secondary;
-  for (let x = 4; x < 256; x += 12) {
-    ctx.fillRect(x, 110, 6, 4);
+  // Dark folded hem and two fine stitch lines.
+  ctx.fillStyle = 'rgba(49,38,27,0.20)';
+  ctx.fillRect(0, 120, 256, 8);
+  ctx.fillStyle = 'rgba(221,207,174,0.46)';
+  for (let x = 2; x < 256; x += 5) {
+    ctx.fillRect(x, 120, 2, 1);
+    ctx.fillRect(x, 125, 2, 1);
   }
   const random = seeded(651);
   for (let i = 0; i < 4800; i++) {
@@ -377,11 +378,28 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
   ];
   signs.forEach(([a, b, c, d], i) => { materials['sign' + i] = signTexture(a, b, c, d, i < 4); });
   const tents = [
-    clothTexture('#a75f4c', '#cfad78'), clothTexture('#3f7776', '#9ea583'),
-    clothTexture('#9b8757', '#d9c39a'), clothTexture('#536f86', '#b9b7a1'),
+    clothTexture('#795a4d', '#aa9476'), clothTexture('#4b6862', '#8f927d'),
+    clothTexture('#897754', '#b6a682'), clothTexture('#526671', '#999b90'),
   ];
 
-  function awning(anchor, angle, width, depth, style, drape = false) {
+  const awningHardware = new THREE.MeshStandardMaterial({ color: 0x4b4135, roughness: .79, metalness: .28 });
+
+  function awning(anchor, angle, width, depth, style, drape = false, frontSupport = null) {
+    const group = new THREE.Group();
+    group.position.copy(anchor);
+    group.rotation.y = angle;
+    const support = frontSupport ?? depth - .13;
+    const drop = frontSupport === null ? .46 : .52;
+    const hem = .065;
+    const addBar = (from, to, thickness) => {
+      const direction = to.clone().sub(from);
+      const bar = new THREE.Mesh(BOX, awningHardware);
+      bar.position.copy(from).lerp(to, .5);
+      bar.scale.set(thickness, direction.length(), thickness);
+      bar.quaternion.setFromUnitVectors(vector(0, 1, 0), direction.normalize());
+      bar.castShadow = bar.receiveShadow = true;
+      group.add(bar);
+    };
     const meshGeometry = new THREE.PlaneGeometry(width, depth, 24, 9);
     const position = meshGeometry.getAttribute('position');
     const base = new Float32Array(position.count * 3);
@@ -389,9 +407,12 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
       const u = meshGeometry.getAttribute('uv').getX(i);
       const v = 1 - meshGeometry.getAttribute('uv').getY(i);
       base[i * 3] = (u - 0.5) * width;
-      base[i * 3 + 1] = drape ? -v * (depth + 0.028 * Math.sin(u * Math.PI * 3)) :
-        -v * 0.52 - 0.13 * Math.sin(Math.PI * v) -
-        Math.max(0, v - 0.87) * (1.27 + 0.38 * Math.cos(u * 12 * Math.PI));
+      const span = Math.min(1, v * depth / support);
+      const overhang = Math.max(0, (v * depth - support) / (depth - support));
+      const sag = Math.sin(Math.PI * span) * (.055 + .065 * Math.sin(Math.PI * u));
+      const fold = Math.sin(u * Math.PI * 4.7 + style) * .014 * Math.sin(Math.PI * span);
+      base[i * 3 + 1] = drape ? -v * (depth + .028 * Math.sin(u * Math.PI * 3)) :
+        -drop * span - sag + fold - overhang * (hem + .012 * Math.sin(u * Math.PI * 5.3 + style));
       base[i * 3 + 2] = drape ? v * 0.029 * Math.sin(u * Math.PI * 9) : v * depth;
     }
     position.array.set(base);
@@ -399,11 +420,24 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
     meshGeometry.computeVertexNormals();
     meshGeometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(meshGeometry, tents[style % tents.length]);
-    mesh.position.copy(anchor);
-    mesh.rotation.y = angle;
     mesh.castShadow = mesh.receiveShadow = true;
-    scene.add(mesh);
-    windMeshes.push({ mesh, base, phase: rand() * TAU, drape });
+    group.add(mesh);
+    if (!drape) {
+      const half = width * .5;
+      if (frontSupport === null) {
+        addBar(vector(-half, -.026, .015), vector(half, -.026, .015), .055);
+        addBar(vector(-half, -drop - .027, support), vector(half, -drop - .027, support), .06);
+      }
+      for (const x of [-half + .15, half - .15]) {
+        addBar(vector(x, -.045, .025), vector(x, -drop - .044, support), .041);
+        if (frontSupport === null) {
+          addBar(vector(x, -.84, -.02), vector(x, -drop - .053, support - .14), .045);
+          addBar(vector(x, -.94, -.025), vector(x, .08, -.025), .073);
+        }
+      }
+    }
+    scene.add(group);
+    windMeshes.push({ mesh, base, phase: rand() * TAU, drape, support });
   }
 
   function suspendedLine(from, to, sag, radius, tint) {
@@ -931,7 +965,7 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
     }
     f.box('wood', wood, 0, 2.83, -depth / 2, width + 0.34, 0.115, 0.118);
     f.box('wood', shade(wood, 0.77), 0, 2.306, depth / 2, width + 0.2, 0.08, 0.08);
-    awning(f.p(0, 2.87, -depth / 2 - 0.06), angle, width + 0.46, depth + 0.22, style);
+    awning(f.p(0, 2.87, -depth / 2 - 0.06), angle, width + 0.46, depth + 0.22, style, false, depth + .06);
     const tableZ = 0.06;
     f.box('wood', shade(wood, 1.23), 0, 0.9, tableZ, width * 0.91, 0.103, 1.1);
     const cloth = [0x956742, 0x5a7974, 0x77654a, 0x8a5b4a][style];
@@ -1303,8 +1337,13 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
   }
   for (const [z, y, width, style, side] of [[36, 5.37, 1.32, 0, -1], [25.9, 5.7, 1.21, 3, 1], [-16.6, 5.12, 0.92, 1, -1]]) {
     suspendedLine(vector(-8.05, y + 0.6, z), vector(8.06, y + 0.61, z + 1), 0.61, 0.013, 0x544d3d);
-    awning(vector(side * 3.12, y + 0.12, z + 0.55), 0, width, 0.92, style, true);
-    awning(vector(side * 1.48, y - 0.045, z + 0.55), 0, width * 0.72, 0.66, (style + 1) % 4, true);
+    const hangingPoint = x => {
+      const t = (x + 8.05) / 16.11;
+      return vector(x, y + .60 + .01 * t - 4 * .61 * t * (1 - t), z + t);
+    };
+    const lineAngle = -Math.atan2(1, 16.11);
+    awning(hangingPoint(side * 3.12), lineAngle, width, .92, style, true);
+    awning(hangingPoint(side * 1.48), lineAngle, width * .72, .66, (style + 1) % 4, true);
   }
 
   // Hand-placed detail clusters around edges, with a quieter driving line.
@@ -1466,15 +1505,16 @@ export function buildWorld(scene, seed = 56103, { baked = false, facadeLayout = 
   function update(time) {
     dust.material.uniforms.time.value = time;
     for (const item of windMeshes) {
-      const { mesh, base, phase, drape } = item;
+      const { mesh, base, phase, drape, support } = item;
       const attr = mesh.geometry.getAttribute('position');
       const axis = drape ? 2 : 1;
       for (let i = 0; i < attr.count; i++) {
         const offset = i * 3;
         const x = base[offset];
         const stretch = drape ? -base[offset + 1] : base[offset + 2];
+        const flex = drape ? .034 * stretch : .022 * Math.sin(Math.PI * Math.min(1, stretch / support));
         const ripple = (Math.sin(time * 1.57 + phase + x * 1.77 - stretch * 2.14) +
-          Math.sin(time * 0.87 + phase * 1.9 + x * 2.42) * 0.36) * 0.034 * stretch;
+          Math.sin(time * 0.87 + phase * 1.9 + x * 2.42) * 0.36) * flex;
         attr.array[offset + axis] = base[offset + axis] + ripple;
       }
       attr.needsUpdate = true;
