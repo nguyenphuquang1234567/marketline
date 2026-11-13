@@ -116,7 +116,9 @@ test('offline match input, combat, respawn and restart', async ({ page, context,
   await page.locator('#close-settings').click();
 
   await deploy(page);
+  await frames(page, 3);
   const start = await snapshot(page);
+  expect(start.fov).toBeGreaterThan(0);
   await page.keyboard.down('w');
   try {
     await expect.poll(async () => {

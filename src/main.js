@@ -410,7 +410,7 @@ class Marketline {
     const trigger = this.trigger || this.touch?.held.has('fire');
     const aimHeld = this.adsButton || this.touch?.ads;
     if (this.touch?.pressed.delete('fire')) this.click = 1;
-    const sprint = (this.action('sprint') || this.touch?.sprint)
+    const sprint = (this.action('sprint') || Boolean(this.touch?.sprint))
       && forward > .5 && !crouch && !aimHeld && !this.reloadPending && !trigger;
     const ads = Boolean(aimHeld) && !sprint;
     this.forward.set(Math.sin(this.yaw), 0, -Math.cos(this.yaw));
@@ -872,7 +872,7 @@ class Marketline {
       snapshot: () => ({
         state: this.state, position: this.player.position.toArray(), ammo: this.player.ammo,
         reserve: this.player.reserve, ads: this.weapon.ads, health: this.player.health, alive: this.player.alive,
-        yaw: this.yaw, pitch: this.pitch, time: this.elapsed, score: this.scores.slice(), pointerLock: document.pointerLockElement === canvas,
+        yaw: this.yaw, pitch: this.pitch, fov: this.camera.fov, time: this.elapsed, score: this.scores.slice(), pointerLock: document.pointerLockElement === canvas,
         bots: this.bots.map(b => ({ state: b.state, position: b.position.toArray(), health: b.health, alive: b.alive })),
       }),
       stage: name => this.stage(name),
