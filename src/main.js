@@ -18,6 +18,8 @@ import { RenderGraph } from './render.js';
 import { loadMarketSky, MARKET_SUN } from './market-sky.js';
 import { loadMarketProps } from './market-props.js';
 import { setWorldMaterialDetail, waitForWorldMaterials } from './world-materials.js';
+import { loadIrradiance } from './irradiance-volume.js';
+import irradianceURL from './assets/al-marfa/irradiance.bin?url&inline';
 import { loadStreetDressing, replaceRubble, scatterStreetDressing } from './street-dressing.js';
 import { DebugView, DEBUG_NAMES } from './debug.js';
 
@@ -147,6 +149,7 @@ class Marketline {
     this.renderer = new RenderGraph(canvas, this.scene, this.camera, this.weaponScene, this.settings, skyPhoto, QA);
     this.renderer.register();
     if (useBlenderMap) {
+      this.renderer.shadows.setIrradiance(await loadIrradiance(irradianceURL));
       // The scatter reads the baked roof height field, so it follows the visible map.
       const rubble = this.scene.children.filter(mesh => mesh.userData.worldMaterial === 'gravel');
       this.dressing = await loadStreetDressing(this.scene, [
@@ -918,6 +921,23 @@ class Marketline {
         enemy.shootAt = 999;
         this.pitch = -.029;
         this.yaw = Math.atan2(enemy.position.x - this.player.position.x, this.player.position.z - enemy.position.z);
+      },
+      // Bake the light probe volume. Each pass adds one more bounce of light.
+      bakeIrradiance: async (passes = 2) => {
+        const hidden = [...this.bots.map(bot => bot.group), this.scene.getObjectByName('Street dressing')].filter(Boolean);
+        const shown = hidden.map(object => object.visible);
+        for (const object of hidden) object.visible = false;
+        this.renderer.shadows.setIrradiance(null);
+        let data;
+        for (let pass = 0; pass < passes; pass++) {
+          data = await this.renderer.bakeIrradiance(done => { window.__bakeProgress = (pass + done) / passes; });
+          this.renderer.shadows.setIrradiance(data);
+        }
+        hidden.forEach((object, index) => { object.visible = shown[index]; });
+        let binary = '';
+        const bytes = new Uint8Array(data.buffer);
+        for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+        return btoa(binary);
       },
       hurt: amount => {
         this.player.spawnShieldUntil = 0;

@@ -1,8 +1,13 @@
 import * as THREE from 'three';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import transcoderURL from 'three/addons/libs/basis/basis_transcoder.js?url&inline';
+import transcoderWasmURL from 'three/addons/libs/basis/basis_transcoder.wasm?url&inline';
 import { streetWetnessGLSL } from './street-surface.js';
 
-const textures = import.meta.glob('./assets/world-textures/*.webp', {
-  eager: true, query: '?inline', import: 'default',
+// GPU-compressed scans: they stay block-compressed in video memory, about a
+// quarter of the footprint of the same images decoded to RGBA.
+const textures = import.meta.glob('./assets/world-textures/*.ktx2', {
+  eager: true, query: '?url&inline', import: 'default',
 });
 
 const scans = {
@@ -30,15 +35,20 @@ export function setWorldMaterialDetail(quality) {
   detail.relief.value = quality === 'Low' ? 0 : 1;
 }
 
-function halved(image) {
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, image.width >> 1);
-  canvas.height = Math.max(1, image.height >> 1);
-  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas;
+// The transcoder is bundled so the portable build works offline.
+const transcoderFiles = { 'basis_transcoder.js': transcoderURL, 'basis_transcoder.wasm': transcoderWasmURL };
+let loader = null;
+
+function textureLoader() {
+  if (loader) return loader;
+  const gl = document.createElement('canvas').getContext('webgl2');
+  const extensions = { has: name => Boolean(gl?.getExtension(name)), get: name => gl.getExtension(name) };
+  const manager = new THREE.LoadingManager().setURLModifier(url => transcoderFiles[url] ?? url);
+  loader = new KTX2Loader(manager).setWorkerLimit(2).detectSupport({ extensions });
+  return loader;
 }
 
-const loader = new THREE.TextureLoader();
+
 const textureLoads = [];
 const scannedTextures = new Map();
 
@@ -294,21 +304,37 @@ function addWeathering(material, kind) {
 }
 
 function loadTexture(kind, channel, colorSpace, anisotropy) {
-  const path = `./assets/world-textures/${kind}-${channel}.webp`;
+  const path = `./assets/world-textures/${kind}-${channel}.ktx2`;
   const existing = scannedTextures.get(path);
   if (existing) return existing;
   const url = textures[path];
   if (!url) throw new Error(`Missing map texture ${path}`);
-  let complete;
-  textureLoads.push(new Promise(resolve => { complete = resolve; }));
-  const texture = loader.load(url, () => {
-    if (detail.half && texture.image.width > 512) texture.image = halved(texture.image);
-    complete();
-  }, undefined, () => complete(path));
+  // Materials are built before the file is transcoded, so they hold this
+  // texture and it takes on the compressed data when that arrives.
+  const texture = new THREE.CompressedTexture();
+  textureLoads.push(new Promise(resolve => {
+    textureLoader().load(url, loaded => {
+      if (detail.half && loaded.mipmaps.length > 1 && loaded.image.width > 512) {
+        loaded.mipmaps.shift();
+        loaded.image.width = loaded.mipmaps[0].width;
+        loaded.image.height = loaded.mipmaps[0].height;
+      }
+      texture.mipmaps = loaded.mipmaps;
+      texture.image = loaded.image;
+      texture.format = loaded.format;
+      texture.type = loaded.type;
+      texture.minFilter = loaded.mipmaps.length > 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.needsUpdate = true;
+      resolve();
+    }, undefined, () => resolve(path));
+  }));
   texture.name = `${kind}-${channel}`;
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.colorSpace = colorSpace;
   texture.anisotropy = anisotropy;
+  texture.generateMipmaps = false;
+  texture.flipY = false;
   scannedTextures.set(path, texture);
   return texture;
 }
@@ -342,5 +368,7 @@ export function createScannedMaterial(kind) {
 export async function waitForWorldMaterials() {
   scannedTextures.clear();
   const paths = (await Promise.all(textureLoads.splice(0))).filter(Boolean);
+  loader?.dispose();
+  loader = null;
   if (paths.length) throw new Error(`Could not decode map textures: ${paths.join(', ')}`);
 }

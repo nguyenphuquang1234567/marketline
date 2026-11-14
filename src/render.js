@@ -3,6 +3,7 @@ import * as S from './shaders.js';
 import { MARKET_SUN as SUN } from './market-sky.js';
 import { roadReflection } from './road-reflection.js';
 import { SkyOcclusion, skyOcclusionGLSL, sunBounceGLSL } from './sky-occlusion.js';
+import { bakeIrradiance, irradianceGLSL, irradianceTextures, PROBE_GRID } from './irradiance-volume.js';
 
 const CASCADE_DISTANCES = [19, 47, 89, 162];
 const PRESETS = {
@@ -170,7 +171,11 @@ class SunShadows {
       mlAxisX: { value: new THREE.Vector3() }, mlAxisY: { value: new THREE.Vector3() },
       mlExtent: { value: new THREE.Vector4(17, 38, 69, 120) }, mlFrame: { value: -1 },
       mlBounce: { value: bounce }, mlBounceColor: { value: new THREE.Color() },
+      mlProbeR: { value: null }, mlProbeG: { value: null }, mlProbeB: { value: null }, mlProbeOn: { value: 0 },
+      mlProbeMin: { value: new THREE.Vector3(...PROBE_GRID.min) },
+      mlProbeInverseSpan: { value: new THREE.Vector3(...PROBE_GRID.step.map((step, i) => 1 / (step * (PROBE_GRID.count[i] - 1)))) },
     };
+    this.setIrradiance(null);
     this.targets = new Set();
     this.center = new THREE.Vector3();
     this.facing = new THREE.Vector3();
@@ -179,6 +184,15 @@ class SunShadows {
     this.extents = [17, 38, 69, 120];
     this.uniforms.mlAxisX.value.copy(this.axisX);
     this.uniforms.mlAxisY.value.copy(this.axisY);
+  }
+
+  // Without a bake the samplers still need a texture bound.
+  setIrradiance(coefficients) {
+    for (const key of ['mlProbeR', 'mlProbeG', 'mlProbeB']) this.uniforms[key].value?.dispose();
+    const textures = coefficients ? irradianceTextures(coefficients)
+      : irradianceTextures(new Float32Array(12), { count: [1, 1, 1] });
+    [this.uniforms.mlProbeR.value, this.uniforms.mlProbeG.value, this.uniforms.mlProbeB.value] = textures;
+    this.uniforms.mlProbeOn.value = coefficients ? 1 : 0;
   }
 
   configure(preset) {
@@ -208,7 +222,7 @@ class SunShadows {
           before(shader, renderer);
           Object.assign(shader.uniforms, this.uniforms);
           shader.vertexShader = shadowVertex + shader.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n' + shadowCoords);
-          shader.fragmentShader = shader.fragmentShader.replace('#include <packing>', '#include <packing>\n' + shadowFragment + skyOcclusionGLSL + sunBounceGLSL)
+          shader.fragmentShader = shader.fragmentShader.replace('#include <packing>', '#include <packing>\n' + shadowFragment + skyOcclusionGLSL + sunBounceGLSL + irradianceGLSL)
             .replace('#include <color_fragment>', `#include <color_fragment>
               {
                 float macroA = mlNoise(mlWorld.xz * .13 + vec2(mlWorld.y * .19, -mlWorld.y * .14));
@@ -227,6 +241,12 @@ class SunShadows {
               reflectedLight.indirectDiffuse *= mix(vec3(1.), vec3(.43, .46, .48), roof);
               reflectedLight.indirectSpecular *= mix(1., .24, roof);
               reflectedLight.indirectDiffuse += mlSunBounce(mlWorld, normalize(mlWorldNormal)) * BRDF_Lambert(material.diffuseColor);
+              if (mlProbeOn > .5) {
+                // Baked probes already hold sky light, roof shadowing and every bounce.
+                vec3 probeNormal = inverseTransformDirection(normal, viewMatrix);
+                reflectedLight.indirectDiffuse = mlProbeIrradiance(mlWorld, normalize(mlWorldNormal), probeNormal)
+                  * BRDF_Lambert(material.diffuseColor);
+              }
             `);
         };
         material.customProgramCacheKey = () => oldKey + ':marketline-sun-array';
@@ -491,6 +511,30 @@ export class RenderGraph {
   register() {
     this.skyOcclusion.bake(this.scene, SUN);
     this.shadows.register(this.scene);
+  }
+
+  // Development-time bake of the probe volume; see scripts/bake-irradiance.mjs.
+  async bakeIrradiance(onProgress) {
+    const { scene, renderer, shadows } = this;
+    const view = new THREE.PerspectiveCamera();
+    const background = scene.background, intensity = scene.backgroundIntensity;
+    scene.background = this.skyPhoto;
+    scene.backgroundIntensity = 2.38;
+    const frame = shadows.uniforms.mlFrame.value;
+    shadows.uniforms.mlFrame.value = -1;
+    try {
+      return await bakeIrradiance(renderer, scene, position => {
+        view.position.copy(position);
+        view.updateMatrixWorld();
+        shadows.dirty = true;
+        shadows.draw(scene, view, 0);
+      }, onProgress);
+    } finally {
+      scene.background = background;
+      scene.backgroundIntensity = intensity;
+      shadows.uniforms.mlFrame.value = frame;
+      this.invalidate();
+    }
   }
 
   trackMotion(root, active = () => true) {
