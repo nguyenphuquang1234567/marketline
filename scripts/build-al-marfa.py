@@ -286,6 +286,8 @@ def main():
             importlib.import_module(module_name).build(ctx)
         from al_marfa_building_facades import build as build_facades
         build_facades(ctx, layout['buildings'])
+        from al_marfa_soften import build as soften_masonry
+        soften_masonry(ctx)
     bpy.context.view_layer.update()
     export_district(ctx, dressing_batches(ctx), args.game)
     if not args.base_only:
