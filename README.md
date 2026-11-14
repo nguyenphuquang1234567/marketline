@@ -47,6 +47,9 @@ The browser harness runs the production build, captures gameplay checkpoints, an
 - `main.js` owns the 120 Hz fixed-step match, input, and damage. `physics.js` provides a binned BVH, continuous shape casts, and the capsule controller. `rigid-world.js` resolves reactive prop contacts with sequential impulses. `effects.js` owns pooled projectiles and debris effects.
 - The default Al Marfa map loads three Blender-exported sectors. `world.js` supplies collision, spawn locations and moving scenery. It also builds the visual map for alternate development seeds. `bots.js` uses a clearance-checked A* grid with cover, hearing, vision, and delayed squad reports. `bot-rig.js` poses the limbs and simulates non-graphic falls. The gait keeps stance feet fixed in world space and emits footsteps on landing. Render poses blend between simulation samples.
 - `render.js` and `shaders.js` own the HDR and post-processing graph. It combines cascaded sun shadows, depth-derived normals, camera and moving-mesh velocity, horizon AO, temporal reprojection, a separately composited viewmodel, bloom, exposure adaptation, and an AgX-style LUT composite.
+- `world-materials.js` builds the scanned PBR surfaces. Cobbles and stone blocks use relief mapping from the scans' height maps. Large surfaces blend a second, coarser sample of the scan to hide tiling. The Low and Medium presets halve the 2K textures at load, and Low skips the relief march.
+- Sun shadows use a blocker search for contact-hardening penumbrae. `sky-occlusion.js` also bakes a map of sunlit paving at load, and every lit surface samples it for warm ground bounce.
+- `street-dressing.js` scatters scanned weeds, stones, crates and street clutter along walls and kerbs, and swaps the map's placeholder rubble for scanned stones. The props have no collision and are culled by distance.
 - `weapon.js` models and animates the carbine. `audio.js` generates gunshots, mechanics, footsteps, ambience, reverb, and HUD sounds with Web Audio. `ui.js` owns the menus and HUD.
 
 Collision uses analytic box proxies and ground. Reactive box contacts use conservative bounds, and ragdolls use position-based distance and bend constraints. This leaves triangle-mesh sweeps, general convex manifolds, and explicit ragdoll twist constraints unimplemented. The temporal passes track world camera motion and bot and prop transforms. The viewmodel composites after world TAA, and transparent effects use an approximate reactive history weight.
@@ -73,5 +76,6 @@ After editing and saving the `.blend`, re-export the game map with `blender -b a
 ## Asset credits
 
 - The map uses [photographic surface scans](src/assets/world-textures/CREDITS.md) and [Kloofendal 38d Partly Cloudy (Pure Sky)](https://polyhaven.com/a/kloofendal_38d_partly_cloudy_puresky) by Greg Zaal and Jarod Guest from Poly Haven, all CC0. The sky is re-exposed, rotated to match the map sun, and bundled as WebP.
+- The weeds, stones and street clutter are [Poly Haven models](src/assets/world-textures/CREDITS.md#street-dressing-models), CC0.
 - The market's produce trays, woven baskets, ceramics, and shop lanterns are modeled in Blender and bundled as a single glTF asset.
 - Barlow Condensed is distributed under the [SIL Open Font License](src/fonts/OFL.txt).

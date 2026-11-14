@@ -17,7 +17,8 @@ import { Effects, randomFor } from './effects.js';
 import { RenderGraph } from './render.js';
 import { loadMarketSky, MARKET_SUN } from './market-sky.js';
 import { loadMarketProps } from './market-props.js';
-import { waitForWorldMaterials } from './world-materials.js';
+import { setWorldMaterialDetail, waitForWorldMaterials } from './world-materials.js';
+import { loadStreetDressing, replaceRubble, scatterStreetDressing } from './street-dressing.js';
 import { DebugView, DEBUG_NAMES } from './debug.js';
 
 const parameters = new URLSearchParams(location.search);
@@ -106,6 +107,7 @@ class Marketline {
     this.ui.progress('Building Al Marfa');
     await this.paint();
     const useBlenderMap = SEED === AL_MARFA_SEED;
+    setWorldMaterialDetail(this.settings.quality);
     this.world = buildWorld(this.scene, SEED, { baked: useBlenderMap });
     this.physics = new StaticBVH(this.world.colliders);
     this.rigid = new RigidWorld(this.physics);
@@ -144,6 +146,20 @@ class Marketline {
     await this.paint();
     this.renderer = new RenderGraph(canvas, this.scene, this.camera, this.weaponScene, this.settings, skyPhoto, QA);
     this.renderer.register();
+    if (useBlenderMap) {
+      // The scatter reads the baked roof height field, so it follows the visible map.
+      const rubble = this.scene.children.filter(mesh => mesh.userData.worldMaterial === 'gravel');
+      this.dressing = await loadStreetDressing(this.scene, [
+        ...scatterStreetDressing({
+          heightAt: (x, z) => this.renderer.skyOcclusion.heightAt(x, z),
+          physics: this.physics, bounds: this.world.bounds, spawns: this.world.spawns, seed: SEED,
+          density: this.settings.quality === 'Low' ? .5 : 1,
+        }),
+        ...replaceRubble(rubble, SEED),
+      ]);
+      this.renderer.shadows.register(this.dressing.group);
+      this.renderer.skyOcclusion.heights = null;
+    }
     this.diagnostics = new DebugView(this.scene, this.physics, this.botSystem.nav);
     this.debugMode = 0;
     for (const bot of this.bots) this.renderer.trackMotion(bot.group);
@@ -247,6 +263,7 @@ class Marketline {
 
   applySettings() {
     this.audio.volume(this.settings.volume);
+    setWorldMaterialDetail(this.settings.quality);
     this.renderer?.configure(this.settings);
     if (this.renderer) this.effects.detail = this.renderer.preset.density;
   }
@@ -756,6 +773,7 @@ class Marketline {
   draw(dt, alpha, moving) {
     this.updateCamera(alpha);
     this.world.update(this.time);
+    this.dressing?.update(this.camera.position);
     this.effects.render(this.renderer.sceneColor.height, this.camera.fov);
     if (moving) {
       this.camera.getWorldDirection(this.forward);
@@ -779,7 +797,7 @@ class Marketline {
     try {
       this.renderer.render(this.time, dt, {
         health: this.player.health, hurt: this.hurt, flash: this.weapon.flashActive ? 1 : 0,
-        weapon: (moving || this.qaScene) && this.player.alive, light: this.light || 1, moving,
+        weapon: (moving || this.qaScene) && this.player.alive && !this.reviewing, light: this.light || 1, moving,
         particles: this.effects.material,
         gas: this.gasTimer > 0 && this.player.alive ? this.weapon.muzzlePosition(this.gasPosition) : null,
         gasStrength: this.gasTimer * 7,
@@ -883,6 +901,15 @@ class Marketline {
         bots: this.bots.map(b => ({ state: b.state, position: b.position.toArray(), health: b.health, alive: b.alive })),
       }),
       stage: name => this.stage(name),
+      // Park the camera anywhere on the map for visual review.
+      dressing: () => this.scene.getObjectByName('Street dressing')?.children.reduce((total, mesh) => total + mesh.count, 0),
+      view: (x, z, yaw = 0, pitch = 0, weapon = false) => {
+        this.reviewing = !weapon;
+        this.stage('market');
+        this.world.landmarks.review = { position: new THREE.Vector3(x, 1.66, z), yaw, pitch };
+        this.setLandmark('review');
+        for (let i = 0; i < 12; i++) this.draw(.016, 1, true);
+      },
       encounter: () => {
         this.setLandmark('market');
         const enemy = this.bots.find(b => b.team === 1);
@@ -924,6 +951,7 @@ class Marketline {
   }
 
   stage(name) {
+    if (name !== 'market') this.reviewing = false;
     this.qaScene = true;
     this.phase('play');
     this.reset();

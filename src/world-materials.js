@@ -6,11 +6,11 @@ const textures = import.meta.glob('./assets/world-textures/*.webp', {
 });
 
 const scans = {
-  plaster: { meters: [2, 2], normal: 0.48, roughness: 1, occlusion: 0.24 },
-  road: { meters: [2, 2], normal: 0.72, roughness: 1, occlusion: 0.38 },
-  asphalt: { meters: [2, 2], normal: 0.43, roughness: 1, occlusion: 0.13 },
-  limestone: { meters: [2, 2], normal: 0.36, roughness: 1, occlusion: 0.16 },
-  brick: { meters: [3, 3], normal: 0.59, roughness: 1, occlusion: 0.24 },
+  plaster: { meters: [2, 2], normal: 0.85, roughness: 1, occlusion: 0.24, macro: 0.71 },
+  road: { meters: [2, 2], normal: 0.72, roughness: 1, occlusion: 0.38, relief: 0.034, macro: 0.36 },
+  asphalt: { meters: [2, 2], normal: 0.8, roughness: 1, occlusion: 0.13, macro: 0.29 },
+  limestone: { meters: [2, 2], normal: 0.75, roughness: 1, occlusion: 0.16, macro: 0.62 },
+  brick: { meters: [3, 3], normal: 0.59, roughness: 1, occlusion: 0.24, relief: 0.026 },
   wood: { meters: [2, 2], normal: 0.55, roughness: 1, occlusion: 0.24 },
   metal: { meters: [2, 2], normal: 0.31, roughness: 0.88, occlusion: 0.16, metalness: 1 },
   shutter: { meters: [2, 2], normal: 0.75, roughness: 0.91, occlusion: 0.25 },
@@ -20,6 +20,23 @@ const scans = {
 export const WORLD_MATERIAL_METERS = Object.fromEntries(
   Object.entries(scans).map(([kind, scan]) => [kind, scan.meters]),
 );
+
+// Scanned surfaces are stored at up to 2K. The lower presets halve them at
+// load and skip the relief march, which keeps their memory and fill cost down.
+const detail = { half: false, relief: { value: 1 } };
+
+export function setWorldMaterialDetail(quality) {
+  detail.half = quality === 'Low' || quality === 'Medium';
+  detail.relief.value = quality === 'Low' ? 0 : 1;
+}
+
+function halved(image) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, image.width >> 1);
+  canvas.height = Math.max(1, image.height >> 1);
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
 
 const loader = new THREE.TextureLoader();
 const textureLoads = [];
@@ -135,18 +152,94 @@ const damagedPlaster = /* glsl */ `
   }
 `;
 
+// Relief mapping: march the scanned height field along the view ray so joints
+// between stones recede and occlude each other at grazing angles.
+const reliefMapping = /* glsl */ `
+  uniform sampler2D marketHeight;
+  uniform float marketRelief;
+  uniform float marketReliefDetail;
+  vec2 marketUv;
+  float marketCavity = 1.;
+  void marketParallax() {
+    marketUv = vMapUv;
+    float distanceFade = 1. - smoothstep(13., 24., length(vViewPosition));
+    if (marketRelief * marketReliefDetail * distanceFade <= 0.) return;
+    vec3 q0 = dFdx(vViewPosition), q1 = dFdy(vViewPosition);
+    vec2 st0 = dFdx(vMapUv), st1 = dFdy(vMapUv);
+    vec3 N = normalize(cross(q0, q1));
+    vec3 V = normalize(vViewPosition);
+    if (dot(N, V) < 0.) N = -N;
+    vec3 q1perp = cross(q1, N), q0perp = cross(N, q0);
+    vec3 T = q1perp * st0.x + q0perp * st1.x;
+    vec3 B = q1perp * st0.y + q0perp * st1.y;
+    float lengthT = dot(T, T), lengthB = dot(B, B);
+    if (lengthT < 1e-16 || lengthB < 1e-16) return;
+    T *= inversesqrt(lengthT);
+    B *= inversesqrt(lengthB);
+    float facing = max(dot(V, N), .18);
+    vec2 slope = vec2(dot(V, T), dot(V, B)) / facing * marketRelief * distanceFade;
+    float layers = mix(22., 7., facing);
+    vec2 stepUv = slope / layers;
+    float stepDepth = 1. / layers, rayDepth = 0.;
+    vec2 uv = vMapUv;
+    float surfaceDepth = 1. - textureGrad(marketHeight, uv, st0, st1).r, previousDepth = surfaceDepth;
+    for (int i = 0; i < 22; i++) {
+      if (rayDepth >= surfaceDepth) break;
+      uv -= stepUv;
+      rayDepth += stepDepth;
+      previousDepth = surfaceDepth;
+      surfaceDepth = 1. - textureGrad(marketHeight, uv, st0, st1).r;
+    }
+    float after = surfaceDepth - rayDepth;
+    float before = previousDepth - rayDepth + stepDepth;
+    float blend = clamp(after / (after - before - 1e-5), 0., 1.);
+    marketUv = uv + stepUv * blend;
+    // Deep joints collect dirt and see less of the sky.
+    marketCavity = mix(1., 1. - .42 * smoothstep(.35, .95, mix(surfaceDepth, previousDepth, blend)), distanceFade);
+  }
+  #define vMapUv marketUv
+  #define vNormalMapUv marketUv
+  #define vAoMapUv marketUv
+  #define vRoughnessMapUv marketUv
+  #define vMetalnessMapUv marketUv
+`;
+
+function addRelief(material, shader, scan) {
+  shader.uniforms.marketHeight = { value: material.reliefMap };
+  shader.uniforms.marketRelief = { value: scan.relief / scan.meters[0] };
+  shader.uniforms.marketReliefDetail = detail.relief;
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <uv_pars_fragment>', '#include <uv_pars_fragment>\n' + reliefMapping)
+    .replace('void main() {', 'void main() {\n  marketParallax();')
+    .replace('diffuseColor *= sampledDiffuseColor;', 'diffuseColor *= sampledDiffuseColor;\n diffuseColor.rgb *= marketCavity;');
+}
+
+// A second, much larger sample of the same scan modulates the first. Its
+// features repeat every dozen metres, so the two-metre tile stops reading as a grid.
+function addMacroVariation(shader, mean) {
+  shader.fragmentShader = shader.fragmentShader.replace(
+    'diffuseColor *= sampledDiffuseColor;',
+    `{
+       vec3 macroScan = texture2D(map, vMapUv * .173 + vec2(.31, .67)).rgb;
+       float macroShift = dot(macroScan, vec3(.3333)) / ${mean.toFixed(3)};
+       sampledDiffuseColor.rgb *= mix(1., clamp(macroShift, .6, 1.5), .6);
+     }
+     diffuseColor *= sampledDiffuseColor;`,
+  );
+}
+
 function addPlasterDamage(material, shader) {
   shader.uniforms.marketDamageAlbedo = { value: material.plasterDamageAlbedo };
   shader.uniforms.marketDamageNormal = { value: material.plasterDamageNormal };
   shader.fragmentShader = shader.fragmentShader
-    .replace('#include <map_fragment>', THREE.ShaderChunk.map_fragment.replace(
+    .replace(
       'diffuseColor *= sampledDiffuseColor;',
       `vec2 damageUV = vMapUv * 1.053 + vec2(.13, .37);
        float exposedMasonry = marketDamageBlend();
        vec3 damagedSurface = texture2D(marketDamageAlbedo, damageUV).rgb;
        sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, damagedSurface * 1.29, exposedMasonry);
        diffuseColor *= sampledDiffuseColor;`,
-    ))
+    )
     .replace('#include <normal_fragment_maps>', THREE.ShaderChunk.normal_fragment_maps.replace(
       'mapN.xy *= normalScale;',
       `vec3 damageNormal = texture2D(marketDamageNormal, damageUV).xyz * 2.0 - 1.0;
@@ -158,10 +251,17 @@ function addPlasterDamage(material, shader) {
 
 function addWeathering(material, kind) {
   const treatment = weathering[kind];
-  if (!treatment) return;
+  const scan = scans[kind];
+  if (!treatment && !scan.relief) return;
   const wetGround = kind === 'road' || kind === 'asphalt';
   material.customProgramCacheKey = () => `marketline-surface-${kind}`;
   material.onBeforeCompile = shader => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', THREE.ShaderChunk.map_fragment);
+    if (scan.macro) addMacroVariation(shader, scan.macro);
+    if (!treatment) {
+      addRelief(material, shader, scan);
+      return;
+    }
     shader.vertexShader = surfaceVaryings + shader.vertexShader.replace(
       '#include <project_vertex>',
       /* glsl */ `
@@ -189,6 +289,7 @@ function addWeathering(material, kind) {
         ));
     }
     if (kind === 'plaster') addPlasterDamage(material, shader);
+    if (scan.relief) addRelief(material, shader, scan);
   };
 }
 
@@ -200,7 +301,10 @@ function loadTexture(kind, channel, colorSpace, anisotropy) {
   if (!url) throw new Error(`Missing map texture ${path}`);
   let complete;
   textureLoads.push(new Promise(resolve => { complete = resolve; }));
-  const texture = loader.load(url, () => complete(), undefined, () => complete(path));
+  const texture = loader.load(url, () => {
+    if (detail.half && texture.image.width > 512) texture.image = halved(texture.image);
+    complete();
+  }, undefined, () => complete(path));
   texture.name = `${kind}-${channel}`;
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.colorSpace = colorSpace;
@@ -212,12 +316,12 @@ function loadTexture(kind, channel, colorSpace, anisotropy) {
 export function createScannedMaterial(kind) {
   const scan = scans[kind];
   if (!scan) return null;
-  const orm = loadTexture(kind, 'orm', THREE.NoColorSpace, 4);
+  const orm = loadTexture(kind, 'orm', THREE.NoColorSpace, 8);
   const material = new THREE.MeshStandardMaterial({
     name: `Marketline ${kind}`,
     vertexColors: true,
-    map: loadTexture(kind, 'albedo', THREE.SRGBColorSpace, 8),
-    normalMap: loadTexture(kind, 'normal', THREE.NoColorSpace, 8),
+    map: loadTexture(kind, 'albedo', THREE.SRGBColorSpace, 16),
+    normalMap: loadTexture(kind, 'normal', THREE.NoColorSpace, 16),
     normalScale: new THREE.Vector2(scan.normal, scan.normal),
     aoMap: orm,
     aoMapIntensity: scan.occlusion,
@@ -226,6 +330,7 @@ export function createScannedMaterial(kind) {
     metalnessMap: scan.metalness ? orm : null,
     metalness: scan.metalness ?? 0,
   });
+  if (scan.relief) material.reliefMap = loadTexture(kind, 'height', THREE.NoColorSpace, 4);
   if (kind === 'plaster') {
     material.plasterDamageAlbedo = loadTexture('plaster-damage', 'albedo', THREE.SRGBColorSpace, 8);
     material.plasterDamageNormal = loadTexture('plaster-damage', 'normal', THREE.NoColorSpace, 8);

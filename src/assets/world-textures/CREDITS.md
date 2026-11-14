@@ -14,6 +14,10 @@ The textures are from [Poly Haven](https://polyhaven.com/textures) and distribut
 | Shutter | [Painted Metal Shutter](https://polyhaven.com/a/painted_metal_shutter) |
 | Cloth | [Denim Fabric 03](https://polyhaven.com/a/denim_fabric_03) |
 
-The 1K source sets were resized for browser delivery. Albedos were adjusted to work with the map's vertex colors. OpenGL normals and packed occlusion, roughness, and metallic maps are stored in lossless WebP. Vite embeds the texture files for offline play.
+Plaster, damaged plaster, road, asphalt, limestone, brick and wood use the 2K downloads for albedo and normal. Albedos are rescaled per channel to keep the neutral tone the map's vertex colors expect. Normals are near-lossless WebP. Packed occlusion, roughness and metallic maps are 1K lossless WebP. `road-height` and `brick-height` are the scans' 1K displacement maps, normalized, and drive relief mapping. Metal, shutter and cloth stay at 1K. Vite embeds the texture files for offline play.
 
-The wood, metal, cloth and shutter normal maps and the wood, metal, cloth, shutter, asphalt and limestone ORM maps use the original 1K PNG downloads converted to lossless WebP. The cloth maps retain the source dimensions of 1024 × 1022.
+## Street dressing models
+
+`../street-dressing.glb` packs these [Poly Haven models](https://polyhaven.com/models), also CC0. `scripts/build-street-dressing.mjs` simplifies them, resizes their textures to 512 px WebP and writes the file.
+
+[Weed Plant 02](https://polyhaven.com/a/weed_plant_02), [Nettle Plant](https://polyhaven.com/a/nettle_plant), [Shrub 03](https://polyhaven.com/a/shrub_03), [Shrub Sorrel 01](https://polyhaven.com/a/shrub_sorrel_01), [Potted Plant 04](https://polyhaven.com/a/potted_plant_04), [Planter Box 01](https://polyhaven.com/a/planter_box_01), [Old Tyre](https://polyhaven.com/a/old_tyre), [Rusted Wheel Rim 01](https://polyhaven.com/a/rusted_wheel_rim_01), [Cardboard Box 01](https://polyhaven.com/a/cardboard_box_01), [Plastic Crate 02](https://polyhaven.com/a/plastic_crate_02), [Wooden Crate 02](https://polyhaven.com/a/wooden_crate_02), [Metal Trash Can](https://polyhaven.com/a/metal_trash_can), [Metal Jerrycan Green](https://polyhaven.com/a/metal_jerrycan_green), [Propane Tank](https://polyhaven.com/a/propane_tank), [Namaqualand Stones 01](https://polyhaven.com/a/namaqualand_stones_01), [Can Rusted](https://polyhaven.com/a/can_rusted), [Wooden Bucket 01](https://polyhaven.com/a/wooden_bucket_01).

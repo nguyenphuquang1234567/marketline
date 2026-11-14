@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import * as S from './shaders.js';
 import { MARKET_SUN as SUN } from './market-sky.js';
 import { roadReflection } from './road-reflection.js';
-import { SkyOcclusion, skyOcclusionGLSL } from './sky-occlusion.js';
+import { SkyOcclusion, skyOcclusionGLSL, sunBounceGLSL } from './sky-occlusion.js';
 
 const CASCADE_DISTANCES = [19, 47, 89, 162];
 const PRESETS = {
@@ -39,6 +39,10 @@ uniform mat4 mlMatrix[4];
 uniform int mlCount;
 uniform float mlTexel;
 uniform vec3 mlSun;
+uniform vec3 mlAxisX;
+uniform vec3 mlAxisY;
+uniform vec4 mlExtent;
+uniform float mlFrame;
 varying vec3 mlWorld;
 varying vec3 mlWorldNormal;
 varying float mlZ;
@@ -61,19 +65,34 @@ const vec2 mlPoisson[8] = vec2[8](
   vec2(-.152, .812), vec2(.784, -.215), vec2(-.341, -.124), vec2(.245, .289)
 );
 
-float mlSingle(int cascade, vec3 world, float rot) {
+// Percentage-closer soft shadows. A short blocker search estimates how far
+// the occluder sits from the receiver, so a shadow is crisp where an object
+// meets the ground and widens with distance like a real solar penumbra.
+float mlSingle(int cascade, vec3 world, vec3 normal, float rot) {
   vec4 proj = mlMatrix[cascade] * vec4(world, 1.);
   vec3 p = proj.xyz * .5 + .5;
   if (any(lessThan(p, vec3(.001))) || any(greaterThan(p, vec3(.999)))) return 1.;
   float c = cos(rot), s = sin(rot);
   mat2 basis = mat2(c, -s, s, c);
-  float radius = mlTexel * (1.57 + float(cascade) * .24);
+  float span = 2. * mlExtent[cascade];
+  // Depth of the receiver's own plane under each tap keeps wide kernels free of acne.
+  vec2 plane = vec2(dot(mlAxisX, normal), dot(mlAxisY, normal)) * span / (max(dot(normal, mlSun), .22) * 319.5);
   float bias = .00014 + float(cascade) * .00007;
+  float searchRadius = max(mlTexel * 2.5, .42 / span);
+  float blockers = 0., blockerDepth = 0.;
+  for (int i = 0; i < 5; i++) {
+    vec2 offset = basis * mlPoisson[i + 3] * searchRadius;
+    float z = unpackRGBAToDepth(texture(mlAtlas, vec3(p.xy + offset, float(cascade))));
+    if (z < p.z + dot(offset, plane) - bias) { blockerDepth += z; blockers += 1.; }
+  }
+  if (blockers < .5) return 1.;
+  float gap = max(0., p.z - blockerDepth / blockers) * 319.5;
+  float radius = clamp(gap * .021 / span, mlTexel * 1.15, mlTexel * 9.);
   float visibility = 0.;
   for (int i = 0; i < 8; i++) {
     vec2 offset = basis * mlPoisson[i] * radius;
     float z = unpackRGBAToDepth(texture(mlAtlas, vec3(p.xy + offset, float(cascade))));
-    visibility += step(p.z - bias, z);
+    visibility += step(p.z + dot(offset, plane) - bias, z);
   }
   return visibility * .125;
 }
@@ -85,10 +104,13 @@ float mlShadow(vec3 world, vec3 normal) {
   if (mlCount == 2) k = mlZ < 19. ? 0 : 1;
   if (mlCount == 3) k = min(k, 2);
   float rot = float(k) * 1.11 + .6;
-  float a = mlSingle(k, world, rot);
+  if (mlFrame >= 0.) {
+    rot = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + mlFrame * vec2(5.17, 3.83), vec2(.06711056, .00583715))));
+  }
+  float a = mlSingle(k, world, normal, rot);
   float end = k == 0 ? 19. : k == 1 ? 47. : k == 2 ? 89. : 162.;
   float weight = smoothstep(end - 4.5, end, mlZ);
-  if (k < mlCount - 1 && weight > .0) a = mix(a, mlSingle(k + 1, world, rot), weight);
+  if (k < mlCount - 1 && weight > .0) a = mix(a, mlSingle(k + 1, world, normal, rot), weight);
   return mix(.035, 1., a);
 }
 `;
@@ -132,7 +154,7 @@ function lutTexture() {
 }
 
 class SunShadows {
-  constructor(renderer, roofHeight) {
+  constructor(renderer, roofHeight, bounce) {
     this.renderer = renderer;
     this.cameras = CASCADE_DISTANCES.map((_, index) => {
       const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, .5, 320);
@@ -145,6 +167,9 @@ class SunShadows {
     this.uniforms = {
       mlAtlas: { value: null }, mlMatrix: { value: this.matrices }, mlCount: { value: 4 },
       mlTexel: { value: 1 / 1024 }, mlSun: { value: SUN }, mlRoofHeight: { value: roofHeight },
+      mlAxisX: { value: new THREE.Vector3() }, mlAxisY: { value: new THREE.Vector3() },
+      mlExtent: { value: new THREE.Vector4(17, 38, 69, 120) }, mlFrame: { value: -1 },
+      mlBounce: { value: bounce }, mlBounceColor: { value: new THREE.Color() },
     };
     this.targets = new Set();
     this.center = new THREE.Vector3();
@@ -152,6 +177,8 @@ class SunShadows {
     this.axisX = new THREE.Vector3(0, 1, 0).cross(SUN).normalize();
     this.axisY = new THREE.Vector3().crossVectors(SUN, this.axisX).normalize();
     this.extents = [17, 38, 69, 120];
+    this.uniforms.mlAxisX.value.copy(this.axisX);
+    this.uniforms.mlAxisY.value.copy(this.axisY);
   }
 
   configure(preset) {
@@ -181,7 +208,7 @@ class SunShadows {
           before(shader, renderer);
           Object.assign(shader.uniforms, this.uniforms);
           shader.vertexShader = shadowVertex + shader.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n' + shadowCoords);
-          shader.fragmentShader = shader.fragmentShader.replace('#include <packing>', '#include <packing>\n' + shadowFragment + skyOcclusionGLSL)
+          shader.fragmentShader = shader.fragmentShader.replace('#include <packing>', '#include <packing>\n' + shadowFragment + skyOcclusionGLSL + sunBounceGLSL)
             .replace('#include <color_fragment>', `#include <color_fragment>
               {
                 float macroA = mlNoise(mlWorld.xz * .13 + vec2(mlWorld.y * .19, -mlWorld.y * .14));
@@ -199,6 +226,7 @@ class SunShadows {
               float roof = mlSkyOcclusion(mlWorld, normalize(mlWorldNormal));
               reflectedLight.indirectDiffuse *= mix(vec3(1.), vec3(.43, .46, .48), roof);
               reflectedLight.indirectSpecular *= mix(1., .24, roof);
+              reflectedLight.indirectDiffuse += mlSunBounce(mlWorld, normalize(mlWorldNormal)) * BRDF_Lambert(material.diffuseColor);
             `);
         };
         material.customProgramCacheKey = () => oldKey + ':marketline-sun-array';
@@ -221,6 +249,7 @@ class SunShadows {
         extent = i === 1 ? 87 : 102;
         distance = 130;
       }
+      this.uniforms.mlExtent.value.setComponent(i, extent);
       const texel = 2 * extent / this.target.width;
       const center = this.center.copy(view.position).addScaledVector(this.facing, distance * .38);
       const x = center.dot(this.axisX), y = center.dot(this.axisY);
@@ -300,7 +329,7 @@ export class RenderGraph {
     this.emptyHands = new THREE.DataTexture(new Uint8Array(4), 1, 1);
     this.emptyHands.needsUpdate = true;
     this.skyOcclusion = new SkyOcclusion(this.renderer);
-    this.shadows = new SunShadows(this.renderer, this.skyOcclusion.target.texture);
+    this.shadows = new SunShadows(this.renderer, this.skyOcclusion.target.texture, this.skyOcclusion.bounce.texture);
     this.skyPhoto = skyPhoto;
     if (this.hdr) {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -315,9 +344,12 @@ export class RenderGraph {
 
     this.sun = new THREE.DirectionalLight(0xffe2bc, 4.12);
     this.sun.position.copy(SUN).multiplyScalar(85);
-    this.skyLight = new THREE.HemisphereLight(0xbfd8fc, 0xb6a085, this.hdr ? 0.79 : 1.28);
+    this.skyLight = new THREE.HemisphereLight(0xbfd8fc, 0x8f7d68, this.hdr ? 0.79 : 1.28);
     scene.fog = new THREE.FogExp2(0xbfc5c5, .0049);
     scene.add(this.sun, this.skyLight);
+    // Radiosity of sunlit paving: sun irradiance on the ground times a mean street albedo.
+    this.shadows.uniforms.mlBounceColor.value.copy(this.sun.color)
+      .multiplyScalar(this.sun.intensity * SUN.y).multiply(new THREE.Color(.31, .27, .22));
     // The bounded practical lights share the pendant positions in shop-interiors.js.
     for (const [x, y, z, color, intensity, range] of [
       [-11.5, 2.42, 29.1, 0xffd294, 10.5, 3.25],
@@ -457,7 +489,7 @@ export class RenderGraph {
   }
 
   register() {
-    this.skyOcclusion.bake(this.scene);
+    this.skyOcclusion.bake(this.scene, SUN);
     this.shadows.register(this.scene);
   }
 
@@ -557,6 +589,9 @@ export class RenderGraph {
     this.inverseVP.copy(this.vp).invert();
     if (!this.valid) this.prevVP.copy(this.vp);
 
+    // Rotate the shadow kernel per pixel and per frame where temporal
+    // accumulation is available to resolve it.
+    this.shadows.uniforms.mlFrame.value = preset.ao ? this.frame % 64 : -1;
     if (moving || this.shadows.dirty) this.shadows.draw(scene, camera, this.frame);
     r.setRenderTarget(this.sceneColor);
     r.clearDepth();
